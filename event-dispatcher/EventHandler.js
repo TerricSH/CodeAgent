@@ -1,4 +1,4 @@
-class ChunkHandler {
+class EventHandler {
     constructor(output) {
         this.output = output;
     }
@@ -8,4 +8,4 @@ class ChunkHandler {
     }
 }
 
-module.exports = ChunkHandler;
+module.exports = EventHandler;

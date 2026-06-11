@@ -1,6 +1,6 @@
-const ChunkHandler = require('./ChunkHandler');
+const EventHandler = require('./EventHandler');
 
-class ToolCallsHandler extends ChunkHandler {
+class ToolCallsHandler extends EventHandler {
     handle(event, state) {
         state.pendingToolCalls = event.calls;
     }

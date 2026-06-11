@@ -2,7 +2,7 @@ const ThinkingHandler = require('./ThinkingHandler');
 const ContentHandler = require('./ContentHandler');
 const ToolCallsHandler = require('./ToolCallsHandler');
 
-class HandlerFactory {
+class EventDispatcher {
     constructor(output) {
         this.handlers = {};
         this.register('thinking', new ThinkingHandler(output));
@@ -14,8 +14,9 @@ class HandlerFactory {
         this.handlers[type] = handler;
     }
 
-    get(type) {
-        return this.handlers[type] || null;
+    dispatch(event, state) {
+        const handler = this.handlers[event.type];
+        if (handler) handler.handle(event, state);
     }
 
     createState() {
@@ -23,4 +24,4 @@ class HandlerFactory {
     }
 }
 
-module.exports = HandlerFactory;
+module.exports = EventDispatcher;
