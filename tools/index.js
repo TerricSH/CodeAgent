@@ -6,8 +6,9 @@ const activateSkill = require('./activate-skill');
 const webSearch = require('./web-search');
 const delegateAgent = require('./delegate-agent');
 const githubSearch = require('./github-search');
+const taskLedger = require('./task-ledger');
 
-const tools = [runCommand, readFile, writeFile, listDir, activateSkill, webSearch, delegateAgent, githubSearch];
+const tools = [runCommand, readFile, writeFile, listDir, activateSkill, webSearch, delegateAgent, githubSearch, taskLedger];
 
 const definitions = tools.map(t => t.definition);
 const prompts = tools.map(t => t.prompt).join('\n\n');

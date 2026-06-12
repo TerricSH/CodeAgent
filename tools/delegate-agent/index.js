@@ -39,7 +39,14 @@ async function handler({ agent: agentName, task }) {
     const Output = require('../../output');
     const runAgentLoop = require('../../agent-runner');
 
-    const subContext = new Context(agentConfig.prompt);
+    const subSession = new Session({
+        metadata: {
+            type: 'subagent',
+            agent: agentName,
+        },
+    });
+
+    const subContext = new Context(agentConfig.prompt, { sessionId: subSession.id });
     subContext.addUser(task);
 
     const subOutput = new Output();
@@ -55,13 +62,6 @@ async function handler({ agent: agentName, task }) {
     });
 
     // Persist subagent conversation as an independent session.
-    const subSession = new Session({
-        metadata: {
-            type: 'subagent',
-            agent: agentName,
-        },
-    });
-
     subSession.add({ role: 'system', content: agentConfig.prompt });
     for (const msg of subContext.messages) {
         if (msg.role === 'assistant' && msg.tool_calls) {

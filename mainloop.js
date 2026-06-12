@@ -5,11 +5,15 @@ const Output = require('./output');
 const tools = require('./tools');
 const runAgentLoop = require('./agent-runner');
 const Session = require('./session');
+const { buildSystemPrompt } = require('./system-prompt');
 
-const systemPrompt = [process.env.SYSTEM_PROMPT, tools.prompts].filter(Boolean).join('\n\n');
-const context = new Context(systemPrompt);
+const systemPrompt = buildSystemPrompt({
+    basePrompt: process.env.SYSTEM_PROMPT,
+    toolPrompts: tools.prompts,
+});
 const output = new Output();
 const session = new Session();
+const context = new Context(systemPrompt, { sessionId: session.id });
 
 const rl = readline.createInterface({
     input: process.stdin,

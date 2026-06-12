@@ -51,6 +51,48 @@ OUTPUT_MODE=cli
 - SQLite 会话保存
 - CLI/TUI 可插拔输出层
 
+## Skills
+
+当前内置技能：
+
+| 技能名称 | 描述 | 适用场景 |
+|---------|------|----------|
+| `code-review` | 代码审查 - 分析代码质量、安全性和性能，给出改进建议 | 代码审查、质量检查 |
+| `create-project` | 项目创建 - 根据需求从零搭建完整项目结构和代码 | 新项目初始化 |
+| `advanced-code-review` | 高级代码审查 - 涵盖多语言框架的深度代码审查 | 多语言项目深度审查 |
+| `systematic-debugging` | 系统化调试 - 四阶段调试方法论，强调先找根因再修复 | Bug调试、问题排查 |
+| `prompt-master` | 提示词大师 - 为任何AI工具编写精准的提示词 | 提示词优化、AI工具使用 |
+| `grill-me` | 代码质询 - 对代码进行深度质询和挑战性审查 | 代码挑战、架构讨论 |
+| `git-commit` | Git提交 - 生成规范的Git提交信息 | Git工作流、提交规范 |
+
+### 技能使用方式
+
+技能会根据用户输入自动激活。例如：
+- 输入代码审查相关请求时，`code-review` 或 `advanced-code-review` 会自动激活
+- 输入调试相关问题时，`systematic-debugging` 会自动激活
+- 输入项目创建需求时，`create-project` 会自动激活
+
+### 技能开发规范
+
+每个技能是一个文件夹，放在 `skills/` 目录下，包含：
+- `index.js`: 技能定义（名称、描述、提示词加载）
+- `prompt.md`: 技能提示词内容
+
+新增技能示例：
+```js
+// skills/my-skill/index.js
+const fs = require('fs');
+const path = require('path');
+
+module.exports = {
+    name: 'my-skill',
+    description: '我的自定义技能',
+    prompt: fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8'),
+};
+```
+
+然后在 `skills/index.js` 中注册新技能。
+
 ## Tools
 
 工具位于 `tools/`，每个工具一个文件夹。
@@ -63,6 +105,7 @@ OUTPUT_MODE=cli
 - `list_dir`: 列出目录
 - `web_search`: 互联网搜索
 - `github_search`: GitHub 搜索
+- `task_ledger`: 轻量任务提醒清单
 - `activate_skill`: 激活 skill
 - `delegate_agent`: 委托子 agent
 

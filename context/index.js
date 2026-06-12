@@ -1,8 +1,11 @@
 const SystemPrompt = require('./system-prompt');
+const TaskLedger = require('../task-ledger');
 
 class Context {
-    constructor(systemPromptText) {
+    constructor(systemPromptText, options = {}) {
         this.systemPrompt = new SystemPrompt(systemPromptText);
+        this.sessionId = options.sessionId || null;
+        this.taskLedger = new TaskLedger();
         this.messages = [];
     }
 

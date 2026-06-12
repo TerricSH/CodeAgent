@@ -1,17 +1,14 @@
 const client = require('./client');
 const EventDispatcher = require('./event-dispatcher');
 const tools = require('./tools');
+const taskLedgerGuard = require('./task-ledger/guard');
 
 async function runAgentLoop(context, output, options = {}) {
     const dispatcher = new EventDispatcher(output);
     const toolDefs = options.tools || tools.definitions;
-    const maxRounds = options.maxRounds || 10;
     const chatOptions = { tools: toolDefs };
 
-    let round = 0;
-
-    while (round < maxRounds) {
-        round++;
+    while (true) {
         const state = dispatcher.createState();
 
         for await (const event of client.chat(context.getMessages(), chatOptions)) {
@@ -22,6 +19,16 @@ async function runAgentLoop(context, output, options = {}) {
 
         if (!state.pendingToolCalls) {
             if (state.reply) context.addAssistant(state.reply);
+
+            // 如果 task ledger 还有未完成条目，提醒模型继续
+            if (taskLedgerGuard.shouldContinue(context)) {
+                const reminder = taskLedgerGuard.buildReminder(context);
+                if (reminder) {
+                    context.addUser(reminder);
+                    continue;
+                }
+            }
+
             return state.reply;
         }
 
@@ -41,8 +48,6 @@ async function runAgentLoop(context, output, options = {}) {
             context.addToolResult(id, result);
         }
     }
-
-    return '[已达到最大工具调用轮次]';
 }
 
 module.exports = runAgentLoop;
