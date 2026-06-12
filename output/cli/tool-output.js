@@ -1,4 +1,4 @@
-const BaseOutput = require('../BaseOutput');
+const BaseOutput = require('../base-output');
 
 class ToolOutput extends BaseOutput {
     renderCall(name, args) {

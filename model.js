@@ -10,7 +10,6 @@ class ModelClient {
         const params = {
             model: this.model,
             messages,
-            max_completion_tokens: options.maxTokens || 1024,
             temperature: options.temperature ?? 1.0,
             top_p: options.topP ?? 0.95,
             stream: true,

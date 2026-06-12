@@ -1,3 +1,5 @@
 node_modules
 .env
 search-providers/config.json
+github/config.json
+.code/

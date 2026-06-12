@@ -6,6 +6,7 @@
         "start": "node mainloop.js"
     },
     "dependencies": {
+        "better-sqlite3": "^11.7.0",
         "dotenv": "^16.4.5",
         "openai": "^4.73.0"
     }

@@ -1,4 +1,4 @@
-const SystemPrompt = require('./systemPrompt');
+const SystemPrompt = require('./system-prompt');
 
 class Context {
     constructor(systemPromptText) {

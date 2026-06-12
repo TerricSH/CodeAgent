@@ -1,6 +1,6 @@
-const ThinkingHandler = require('./ThinkingHandler');
-const ContentHandler = require('./ContentHandler');
-const ToolCallsHandler = require('./ToolCallsHandler');
+const ThinkingHandler = require('./thinking-handler');
+const ContentHandler = require('./content-handler');
+const ToolCallsHandler = require('./tool-calls-handler');
 
 class EventDispatcher {
     constructor(output) {

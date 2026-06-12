@@ -1,4 +1,4 @@
-const EventHandler = require('./EventHandler');
+const EventHandler = require('./event-handler');
 
 class ContentHandler extends EventHandler {
     handle(event, state) {

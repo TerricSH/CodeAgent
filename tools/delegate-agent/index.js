@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const agents = require('../../agents');
-const tools = require('../index');
+const Session = require('../../session');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
@@ -32,6 +32,9 @@ async function handler({ agent: agentName, task }) {
     const agentConfig = agents.get(agentName);
     if (!agentConfig) return `未知 agent: ${agentName}`;
 
+    // Lazy load to avoid circular dependency with tools/index.js
+    const tools = require('../index');
+
     const Context = require('../../context');
     const Output = require('../../output');
     const runAgentLoop = require('../../agent-runner');
@@ -50,6 +53,30 @@ async function handler({ agent: agentName, task }) {
         tools: allowedTools,
         maxRounds: 10,
     });
+
+    // Persist subagent conversation as an independent session.
+    const subSession = new Session({
+        metadata: {
+            type: 'subagent',
+            agent: agentName,
+        },
+    });
+
+    subSession.add({ role: 'system', content: agentConfig.prompt });
+    for (const msg of subContext.messages) {
+        if (msg.role === 'assistant' && msg.tool_calls) {
+            subSession.add({
+                role: 'assistant',
+                content: JSON.stringify({ tool_calls: msg.tool_calls }),
+            });
+            continue;
+        }
+
+        if (typeof msg.content === 'string') {
+            subSession.add({ role: msg.role, content: msg.content });
+        }
+    }
+    subSession.save();
 
     return result || '[子 agent 未返回结果]';
 }

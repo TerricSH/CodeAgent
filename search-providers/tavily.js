@@ -1,4 +1,4 @@
-const BaseSearchProvider = require('./BaseSearchProvider');
+const BaseSearchProvider = require('./base-search-provider');
 
 class TavilyProvider extends BaseSearchProvider {
     async search(query, maxResults = 5) {

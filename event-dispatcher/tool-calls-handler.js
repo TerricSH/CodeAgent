@@ -1,4 +1,4 @@
-const EventHandler = require('./EventHandler');
+const EventHandler = require('./event-handler');
 
 class ToolCallsHandler extends EventHandler {
     handle(event, state) {
