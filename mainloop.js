@@ -6,6 +6,7 @@ const tools = require('./tools');
 const runAgentLoop = require('./agent-runner');
 const Session = require('./session');
 const { buildSystemPrompt } = require('./system-prompt');
+const { labels } = require('./output/cli/labels');
 
 const systemPrompt = buildSystemPrompt({
     basePrompt: process.env.SYSTEM_PROMPT,
@@ -30,7 +31,8 @@ rl.on('close', () => {
 
 function ask() {
     if (closed) return;
-    rl.question('你: ', async (input) => {
+    const userPrompt = labels['prompt.user'] || '你';
+    rl.question(`${userPrompt}: `, async (input) => {
         const text = input.trim();
         if (!text) return ask();
         if (text === 'exit') {

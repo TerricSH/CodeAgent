@@ -38,6 +38,32 @@ OUTPUT_MODE=cli
 
 当前使用 OpenAI-compatible chat completions 接口。
 
+## UI Labels Config
+
+终端文案默认由配置文件管理：
+
+```text
+output/cli/labels.json
+```
+
+可直接修改该文件自定义终端前缀文案，无需改动代码。
+
+可配置 key：
+
+- `prompt.user`：用户输入前缀
+- `prompt.ai`：AI 回复前缀
+- `label.thinking`：思考开始标记
+- `label.thinkingEnd`：思考结束标记
+- `label.toolCall`：工具调用标签
+- `label.toolResult`：工具结果标签
+- `label.error`：错误前缀
+
+如需环境变量覆盖（优先级高于 JSON 文件），可设置：
+
+```env
+UI_LABELS={"prompt.user":"User","prompt.ai":"Bot"}
+```
+
 ## Features
 
 - 多轮命令行对话
@@ -50,6 +76,7 @@ OUTPUT_MODE=cli
 - skill 自动激活
 - SQLite 会话保存
 - CLI/TUI 可插拔输出层
+- 终端文案可通过 `output/cli/labels.json` 配置
 
 ## Skills
 
@@ -177,3 +204,4 @@ OUTPUT_MODE=cli
 - `.env`、搜索配置、GitHub 配置和 `.code/` 数据库都已忽略提交。
 - 工具 prompt 会拼接进系统提示词，应保持简短。
 - 大工具结果会完整传给模型，终端展示由 output 层决定。
+- 终端前缀文案默认读取 `output/cli/labels.json`，无需修改代码。

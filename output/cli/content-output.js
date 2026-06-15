@@ -1,8 +1,10 @@
 const BaseOutput = require('../base-output');
+const { labels } = require('./labels');
 
 class ContentOutput extends BaseOutput {
     renderStart() {
-        this.write('AI: ');
+        const aiLabel = labels['prompt.ai'] || 'AI';
+        this.write(this.colorize(`${aiLabel}: `, BaseOutput.colors.lightCyan));
     }
 
     render(text) {

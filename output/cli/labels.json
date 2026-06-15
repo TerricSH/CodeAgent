@@ -1,0 +1,9 @@
+{
+  "prompt.user": "你",
+  "prompt.ai": "AI",
+  "label.thinking": "━━━ 思考中 ",
+  "label.thinkingEnd": " ━━━",
+  "label.toolCall": "[调用工具]",
+  "label.toolResult": "[工具结果]",
+  "label.error": "错误"
+}
