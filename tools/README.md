@@ -1,6 +1,6 @@
 # Tool Development Guide
 
-工具是模型可自动调用的本地能力。每个工具必须放在 `tools/<tool-folder>/` 下，并由 `tools/index.js` 统一注册。
+工具是模型可自动调用的本地能力。核心工具放在 `tools/<tool-folder>/` 下，并由 `tools/index.js` 注册。运行时插件也可以贡献工具；这类工具应放在对应插件目录内，由插件注册表交给工具注册表。
 
 ## Folder Structure
 
@@ -74,7 +74,7 @@ module.exports = { definition, handler, prompt };
 
 ## Registration
 
-新增工具后，在 `tools/index.js` 中注册：
+新增核心工具后，在 `tools/index.js` 中注册：
 
 ```js
 const myTool = require('./my-tool');
@@ -83,6 +83,15 @@ const tools = [existingTool, myTool];
 ```
 
 注册后模型会自动看到该工具的 `definition` 和 `prompt`。
+
+`tools/index.js` 默认导出的 `definitions`、`prompts` 和 `execute` 只包含核心工具。插件贡献的工具必须通过工具注册表合并：
+
+```js
+const plugins = createDefaultRegistry();
+const toolRegistry = tools.createRegistry(plugins.getTools());
+```
+
+如果调用 `runAgentLoop` 时用 `options.tools` 过滤工具列表，必须同时传入对应的 `toolRegistry`，否则 runner 会拒绝启动，避免模型看到某个工具但执行器不存在。
 
 ## Handler Rules
 

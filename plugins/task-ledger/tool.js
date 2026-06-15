@@ -1,8 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const { getLedger } = require('./state');
+const { formatItem, formatList } = require('./format');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
-
 const STATUSES = ['pending', 'in_progress', 'completed', 'blocked'];
 
 const definition = {
@@ -46,18 +47,8 @@ const definition = {
     },
 };
 
-function formatItem(item) {
-    const note = item.note ? ` - ${item.note}` : '';
-    return `${item.order}. [${item.status}] ${item.id} ${item.title}${note}`;
-}
-
-function formatList(items) {
-    if (!items.length) return '当前 task ledger 为空';
-    return items.map(formatItem).join('\n');
-}
-
 async function handler(args, context) {
-    const ledger = context.taskLedger;
+    const ledger = getLedger(context);
     if (!ledger) return 'task_ledger 不可用';
 
     try {

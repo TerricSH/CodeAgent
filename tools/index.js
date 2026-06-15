@@ -6,22 +6,47 @@ const activateSkill = require('./activate-skill');
 const webSearch = require('./web-search');
 const delegateAgent = require('./delegate-agent');
 const githubSearch = require('./github-search');
-const taskLedger = require('./task-ledger');
 
-const tools = [runCommand, readFile, writeFile, listDir, activateSkill, webSearch, delegateAgent, githubSearch, taskLedger];
+const coreTools = [runCommand, readFile, writeFile, listDir, activateSkill, webSearch, delegateAgent, githubSearch];
 
-const definitions = tools.map(t => t.definition);
-const prompts = tools.map(t => t.prompt).join('\n\n');
+function createRegistry(extraTools = []) {
+    const registeredTools = [...coreTools, ...extraTools];
+    const handlers = {};
 
-const handlers = {};
-for (const t of tools) {
-    handlers[t.definition.function.name] = t.handler;
+    for (const tool of registeredTools) {
+        handlers[tool.definition.function.name] = tool.handler;
+    }
+
+    function has(name) {
+        return Object.prototype.hasOwnProperty.call(handlers, name);
+    }
+
+    function names() {
+        return Object.keys(handlers);
+    }
+
+    return {
+        definitions: registeredTools.map(t => t.definition),
+        prompts: registeredTools.map(t => t.prompt).filter(Boolean).join('\n\n'),
+        has,
+        names,
+        async execute(name, args, context) {
+            const handler = handlers[name];
+            if (!handler) return `未知工具: ${name}`;
+            return await handler(args, context);
+        },
+    };
 }
 
-async function execute(name, args, context) {
-    const handler = handlers[name];
-    if (!handler) return `未知工具: ${name}`;
-    return await handler(args, context);
-}
+const defaultRegistry = createRegistry();
 
-module.exports = { definitions, prompts, execute };
+module.exports = {
+    coreTools,
+    createRegistry,
+    // Core-only registry exports. Plugin tools require createRegistry(plugins.getTools()).
+    definitions: defaultRegistry.definitions,
+    prompts: defaultRegistry.prompts,
+    has: defaultRegistry.has,
+    names: defaultRegistry.names,
+    execute: defaultRegistry.execute,
+};

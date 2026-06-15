@@ -122,7 +122,7 @@ module.exports = {
 
 ## Tools
 
-工具位于 `tools/`，每个工具一个文件夹。
+核心工具位于 `tools/`，每个工具一个文件夹。运行时插件也可以通过插件注册表贡献模型可调用工具。
 
 当前内置工具：
 
@@ -132,11 +132,20 @@ module.exports = {
 - `list_dir`: 列出目录
 - `web_search`: 互联网搜索
 - `github_search`: GitHub 搜索
-- `task_ledger`: 轻量任务提醒清单
 - `activate_skill`: 激活 skill
 - `delegate_agent`: 委托子 agent
 
 新增工具规范见 [tools/README.md](tools/README.md)。
+
+## Runtime Plugins
+
+运行时插件用于给会话上下文注入独立能力状态和生命周期钩子，不等同于模型可调用的 `tools/`。
+
+当前内置插件：
+
+- `task-ledger`: 为当前会话初始化任务清单状态，并贡献 `task_ledger` 工具和确定性的 continuation guard。
+
+插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态、metadata 和插件状态，不再直接实例化任务清单。
 
 ## Search Config
 
@@ -178,6 +187,8 @@ agent-runner.js          # Agent 对话与工具调用循环
 client.js                # 模型客户端实例
 model.js                 # 模型 API 封装
 context/                 # 对话上下文
+plugins/                 # 运行时插件
+runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
 data-layer/              # SQLite 与 repository
 output/                  # 输出层插件入口与 CLI 实现

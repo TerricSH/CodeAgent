@@ -38,6 +38,7 @@ async function handler({ agent: agentName, task }) {
     const Context = require('../../context');
     const Output = require('../../output');
     const runAgentLoop = require('../../agent-runner');
+    const { createDefaultRegistry } = require('../../plugins');
 
     const subSession = new Session({
         metadata: {
@@ -46,19 +47,23 @@ async function handler({ agent: agentName, task }) {
         },
     });
 
+    const subPlugins = createDefaultRegistry({ scope: 'agent' });
+    const subToolRegistry = tools.createRegistry(subPlugins.getTools());
     const subContext = new Context(agentConfig.prompt, { sessionId: subSession.id });
+    await subPlugins.init(subContext);
     subContext.addUser(task);
 
     const subOutput = new Output();
 
     // 过滤子 agent 允许的工具
     const allowedTools = agentConfig.tools
-        ? tools.definitions.filter(t => agentConfig.tools.includes(t.function.name))
-        : tools.definitions;
+        ? subToolRegistry.definitions.filter(t => agentConfig.tools.includes(t.function.name))
+        : subToolRegistry.definitions;
 
     const result = await runAgentLoop(subContext, subOutput, {
         tools: allowedTools,
-        maxRounds: 10,
+        toolRegistry: subToolRegistry,
+        plugins: subPlugins,
     });
 
     // Persist subagent conversation as an independent session.

@@ -1,12 +1,25 @@
 const SystemPrompt = require('./system-prompt');
-const TaskLedger = require('../task-ledger');
 
 class Context {
     constructor(systemPromptText, options = {}) {
         this.systemPrompt = new SystemPrompt(systemPromptText);
         this.sessionId = options.sessionId || null;
-        this.taskLedger = new TaskLedger();
+        this.metadata = options.metadata || {};
+        this.pluginState = Object.create(null);
         this.messages = [];
+    }
+
+    setPluginState(name, state) {
+        this.pluginState[name] = state;
+        return state;
+    }
+
+    getPluginState(name) {
+        return this.hasPluginState(name) ? this.pluginState[name] : null;
+    }
+
+    hasPluginState(name) {
+        return Object.prototype.hasOwnProperty.call(this.pluginState, name);
     }
 
     addUser(content) {
@@ -44,6 +57,7 @@ class Context {
 
     clear() {
         this.messages = [];
+        this.pluginState = Object.create(null);
     }
 }
 
