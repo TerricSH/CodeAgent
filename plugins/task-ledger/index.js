@@ -1,4 +1,4 @@
-const TaskLedger = require('../../task-ledger');
+const TaskLedger = require('./ledger');
 const continuationGuard = require('./guard');
 const { NAME, createState } = require('./state');
 const tool = require('./tool');

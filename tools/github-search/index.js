@@ -1,20 +1,24 @@
 const fs = require('fs');
 const path = require('path');
-const githubSearch = require('../../github/search-client');
+const GitHubProvider = require('../../search-providers/github');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
+
+// Load github provider config from search-providers config
+const spConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'search-providers', 'config.json'), 'utf-8'));
+const github = new GitHubProvider(spConfig.providers?.github || {});
 
 const definition = {
     type: 'function',
     function: {
         name: 'github_search',
-        description: '搜索 GitHub 上的仓库、代码、Issue/PR 或用户',
+        description: '搜索 GitHub 上的仓库、代码、Issue 或用户',
         parameters: {
             type: 'object',
             properties: {
                 query: {
                     type: 'string',
-                    description: 'GitHub 搜索关键词，支持 repo:, user:, org:, language:, filename: 等限定符',
+                    description: 'GitHub 搜索关键词',
                 },
                 type: {
                     type: 'string',
@@ -23,7 +27,7 @@ const definition = {
                 },
                 max_results: {
                     type: 'number',
-                    description: '返回结果数量，默认使用 github/config.json 中的 perPage',
+                    description: '返回结果数量，默认 5',
                 },
             },
             required: ['query'],
@@ -33,11 +37,7 @@ const definition = {
 
 async function handler({ query, type, max_results }) {
     try {
-        const data = await githubSearch.search({
-            query,
-            type: type || 'repositories',
-            maxResults: max_results,
-        });
+        const data = await github.search(query, max_results || 5, { type: type || 'repositories' });
 
         if (data.error) return `GitHub 搜索失败: ${data.error}`;
 

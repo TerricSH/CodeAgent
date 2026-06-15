@@ -7,6 +7,7 @@ const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
 const BUILTIN = {
     tavily: './tavily',
     serper: './serper',
+    github: './github',
 };
 
 function loadProvider(name) {
