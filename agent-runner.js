@@ -73,12 +73,17 @@ async function runAgentLoop(context, output, options = {}) {
                 output.tool.renderCall(tc.name, tc.arguments);
                 const result = await toolRegistry.execute(tc.name, tc.arguments, context);
                 output.tool.renderResult(tc.name, result);
-                return { id: tc.id, toolCall: tc, result };
+                return {
+                    id: tc.id,
+                    toolCall: tc,
+                    result,
+                    finishedAt: new Date().toISOString(),
+                };
             })
         );
 
-        for (const { id, toolCall, result } of results) {
-            context.addToolResult(id, result);
+        for (const { id, toolCall, result, finishedAt } of results) {
+            context.addToolResult(id, result, { finishedAt });
             if (plugins) await plugins.onToolResult(context, toolCall, result);
         }
     }

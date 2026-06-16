@@ -26,10 +26,30 @@ async function main() {
         output: process.stdout,
     });
 
+    function snapshotMessages(ctx) {
+        return ctx.messages.map((msg) => {
+            const createdAt = msg.created_at || msg.timestamp || new Date().toISOString();
+            if (!msg.timestamp) msg.timestamp = createdAt;
+            if (!msg.created_at) msg.created_at = createdAt;
+            return {
+                ...msg,
+                finished_at: msg.finished_at || null,
+            };
+        });
+    }
+
+    function persistSession(isClosing = false) {
+        return session.save({
+            messages: snapshotMessages(context),
+            metadata: context.metadata,
+            endTime: isClosing ? new Date().toISOString() : null,
+        });
+    }
+
     let closed = false;
     rl.on('close', () => {
         closed = true;
-        const sessionId = session.save();
+        const sessionId = persistSession(true);
         console.log(`对话已保存到 SQLite, sessionId: ${sessionId}`);
         Session.close();
     });
@@ -46,12 +66,13 @@ async function main() {
             }
 
             context.addUser(text);
-            session.add({ role: 'user', content: text });
+            persistSession();
 
             try {
-                const reply = await runAgentLoop(context, output, { plugins, toolRegistry });
-                if (reply) session.add({ role: 'assistant', content: reply });
+                await runAgentLoop(context, output, { plugins, toolRegistry });
+                persistSession();
             } catch (err) {
+                persistSession();
                 output.error.render(err.message);
             }
 

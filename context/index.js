@@ -22,16 +22,26 @@ class Context {
         return Object.prototype.hasOwnProperty.call(this.pluginState, name);
     }
 
+    createMessage(message) {
+        const createdAt = message.created_at || message.timestamp || new Date().toISOString();
+        const timestamp = message.timestamp || createdAt;
+        return {
+            ...message,
+            created_at: createdAt,
+            timestamp,
+        };
+    }
+
     addUser(content) {
-        this.messages.push({ role: 'user', content });
+        this.messages.push(this.createMessage({ role: 'user', content }));
     }
 
     addAssistant(content) {
-        this.messages.push({ role: 'assistant', content });
+        this.messages.push(this.createMessage({ role: 'assistant', content }));
     }
 
     addAssistantToolCalls(toolCalls) {
-        this.messages.push({
+        this.messages.push(this.createMessage({
             role: 'assistant',
             content: null,
             tool_calls: toolCalls.map(tc => ({
@@ -39,15 +49,16 @@ class Context {
                 type: 'function',
                 function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
             })),
-        });
+        }));
     }
 
-    addToolResult(toolCallId, result) {
-        this.messages.push({
+    addToolResult(toolCallId, result, options = {}) {
+        this.messages.push(this.createMessage({
             role: 'tool',
             tool_call_id: toolCallId,
             content: typeof result === 'string' ? result : JSON.stringify(result),
-        });
+            finished_at: options.finishedAt || null,
+        }));
     }
 
     getMessages() {

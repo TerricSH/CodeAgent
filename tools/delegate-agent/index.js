@@ -67,21 +67,14 @@ async function handler({ agent: agentName, task }) {
     });
 
     // Persist subagent conversation as an independent session.
-    subSession.add({ role: 'system', content: agentConfig.prompt });
-    for (const msg of subContext.messages) {
-        if (msg.role === 'assistant' && msg.tool_calls) {
-            subSession.add({
-                role: 'assistant',
-                content: JSON.stringify({ tool_calls: msg.tool_calls }),
-            });
-            continue;
-        }
-
-        if (typeof msg.content === 'string') {
-            subSession.add({ role: msg.role, content: msg.content });
-        }
-    }
-    subSession.save();
+    subSession.save({
+        messages: subContext.messages.map((msg) => ({ ...msg })),
+        metadata: {
+            ...subSession.metadata,
+            parentSessionId: context.sessionId || null,
+        },
+        endTime: new Date().toISOString(),
+    });
 
     return result || '[子 agent 未返回结果]';
 }

@@ -2,28 +2,26 @@ const sessionRepository = require('../data-layer/repositories/session-repository
 
 class Session {
     constructor(options = {}) {
-        this.id = Date.now().toString(36);
+        this.id = globalThis.crypto?.randomUUID?.() || Date.now().toString(36);
         this.startTime = new Date().toISOString();
-        this.messages = [];
         this.metadata = options.metadata || null;
     }
 
-    add(message) {
-        this.messages.push({
-            ...message,
-            timestamp: new Date().toISOString(),
-        });
-    }
+    save(options = {}) {
+        const endTime = Object.prototype.hasOwnProperty.call(options, 'endTime')
+            ? options.endTime
+            : new Date().toISOString();
+        const messages = Array.isArray(options.messages) ? options.messages : [];
+        const metadata = options.metadata !== undefined ? options.metadata : this.metadata;
 
-    save() {
-        const endTime = new Date().toISOString();
         sessionRepository.saveSession({
             id: this.id,
             startTime: this.startTime,
             endTime,
-            metadata: this.metadata,
-            messages: this.messages,
+            metadata,
+            messages,
         });
+
         return this.id;
     }
 
@@ -31,12 +29,12 @@ class Session {
         return sessionRepository.listSessions();
     }
 
-    static listFromDb() {
-        return this.list();
-    }
-
     static load(id) {
         return sessionRepository.loadSession(id);
+    }
+
+    static messages(id, options = {}) {
+        return sessionRepository.getSessionMessages(id, options);
     }
 
     static close() {
