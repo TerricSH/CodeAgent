@@ -40,13 +40,14 @@ OUTPUT_MODE=cli
 
 ## UI Labels Config
 
-终端文案默认由配置文件管理：
+终端文案默认由配置文件管理（每个输出模式各自一份）：
 
 ```text
 output/cli/labels.json
+output/tui/labels.json
 ```
 
-可直接修改该文件自定义终端前缀文案，无需改动代码。
+可直接修改对应模式的文件自定义终端前缀文案，无需改动代码。
 
 可配置 key：
 
@@ -191,7 +192,7 @@ plugins/                 # 运行时插件
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
 data-layer/              # SQLite 与 repository
-output/                  # 输出层插件入口与 CLI 实现
+output/                  # 输出层插件入口与 CLI/TUI 实现
 event-dispatcher/        # 模型事件分发
 skills/                  # skill 配置
 agents/                  # subagent 配置
@@ -202,13 +203,16 @@ github/                  # GitHub API 配置与客户端
 
 ## Output Plugin
 
-默认输出模式是 CLI：
+内置两种输出模式：CLI（默认，行内标记风格）与 TUI（边框面板风格）：
 
 ```env
+# 默认 CLI
 OUTPUT_MODE=cli
+# 或启用 TUI 面板风格
+OUTPUT_MODE=tui
 ```
 
-`output/index.js` 会根据 `OUTPUT_MODE` 加载内置或外部输出插件。外部插件可以使用 `codeagent-output-<mode>` 的 npm 包名。
+`output/index.js` 会根据 `OUTPUT_MODE` 加载内置或外部输出插件。内置模式对应 `output/<mode>/` 目录（如 `output/cli`、`output/tui`），每个模式实现相同的输出契约：`thinking` / `content` / `tool` / `error` 子输出。外部插件可以使用 `codeagent-output-<mode>` 的 npm 包名。
 
 ## Notes
 
