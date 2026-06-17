@@ -7,6 +7,8 @@ class PluginRegistry {
     constructor(options = {}) {
         this.entries = [];
         this.storeFactory = typeof options.storeFactory === 'function' ? options.storeFactory : null;
+        // 宿主注入的通用能力（如 output 交互层）；不针对任何具体插件，所有插件 init 时均可取用。
+        this.services = options.services && typeof options.services === 'object' ? options.services : {};
         if (Array.isArray(options.plugins)) {
             for (const plugin of options.plugins) {
                 this.register(plugin);
@@ -42,7 +44,7 @@ class PluginRegistry {
         for (const entry of this.entries) {
             const store = this.storeFactory ? this.storeFactory(entry.plugin.name) : null;
             const extension = entry.plugin.init
-                ? await entry.plugin.init(context, { store, config: entry.config })
+                ? await entry.plugin.init(context, { store, config: entry.config, services: this.services })
                 : null;
             entry.extension = extension || null;
 
@@ -159,4 +161,14 @@ class PluginRegistry {
     }
 }
 
+// 工具命名空间名 → 基名：`owner__base` 取分隔符之后部分；核心工具无分隔符则原样返回。
+// owner 为 kebab-case、base 为 snake_case，二者都不含 `__`，故按首个分隔符切分稳定。
+function baseToolName(name) {
+    const str = String(name);
+    const i = str.indexOf(NAMESPACE_SEPARATOR);
+    return i >= 0 ? str.slice(i + NAMESPACE_SEPARATOR.length) : str;
+}
+
 module.exports = PluginRegistry;
+module.exports.NAMESPACE_SEPARATOR = NAMESPACE_SEPARATOR;
+module.exports.baseToolName = baseToolName;

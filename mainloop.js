@@ -10,24 +10,29 @@ const { labels } = require('./output/cli/labels');
 const { createDefaultRegistry } = require('./plugins');
 
 async function main() {
-    const plugins = createDefaultRegistry();
+    const output = new Output();
+    const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    });
+    // 核心 IO 组装：把共享 readline 交给交互收集器，供其在选择期间 pause/resume，避免按键串扰。
+    if (output.prompt && typeof output.prompt.setInput === 'function') {
+        output.prompt.setInput(rl);
+    }
+
+    // 通用能力注入：宿主只提供 output 交互层，不感知任何具体插件。
+    const plugins = createDefaultRegistry({ services: { output } });
     const toolRegistry = tools.createRegistry(plugins.getTools());
     const systemPrompt = buildSystemPrompt({
         basePrompt: process.env.SYSTEM_PROMPT,
         toolPrompts: toolRegistry.prompts,
     });
-    const output = new Output();
     const session = new Session();
     const context = new Context(systemPrompt, {
         sessionId: session.id,
         resolveExtension: (name) => plugins.resolveApi(name),
     });
     await plugins.init(context);
-
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
 
     // 原子持久化 + 脏标记节流：消息快照与扩展态在同一事务落库，无变化则跳过。
     let lastSavedCount = 0;

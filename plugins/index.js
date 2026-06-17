@@ -1,8 +1,9 @@
 const PluginRegistry = require('../context/plugins');
 const { createScopedStore } = require('../data-layer/repositories/extension-state-repository');
 const taskLedgerPlugin = require('./task-ledger');
+const askUserPlugin = require('./ask-user');
 
-const defaultPlugins = [taskLedgerPlugin];
+const defaultPlugins = [taskLedgerPlugin, askUserPlugin];
 
 function getPluginConfig(name, options = {}) {
     const pluginOptions = options.plugins || {};
@@ -16,7 +17,10 @@ function getPluginConfig(name, options = {}) {
 }
 
 function createDefaultRegistry(options = {}) {
-    const registry = new PluginRegistry({ storeFactory: createScopedStore });
+    const registry = new PluginRegistry({
+        storeFactory: createScopedStore,
+        services: options.services || {},
+    });
 
     for (const plugin of defaultPlugins) {
         registry.register(plugin, getPluginConfig(plugin.name, options));
@@ -28,4 +32,5 @@ function createDefaultRegistry(options = {}) {
 module.exports = {
     createDefaultRegistry,
     taskLedgerPlugin,
+    askUserPlugin,
 };

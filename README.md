@@ -145,8 +145,13 @@ module.exports = {
 当前内置插件：
 
 - `task-ledger`: 为当前会话初始化任务清单状态，并贡献 `task_ledger` 工具和确定性的 continuation guard。
+- `ask-user`: 需要补充信息时贡献 `ask_user` 工具，向用户批量提问（选项或自由作答），并把已收集信息注入系统提示作为基础信息。
 
 插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态、metadata 和插件状态，不再直接实例化任务清单。
+
+宿主可在创建注册表时通过 `createDefaultRegistry({ services })` 注入通用能力（如 `services.output` 交互层），这些能力会传给每个插件的 `init(context, { store, config, services })`。宿主只提供通用能力、不感知具体插件；插件自带的终端文案随插件存放在插件目录内，不写入核心 `output/<mode>/labels.json`。
+
+新增插件规范与接口清单见 [plugins/README.md](plugins/README.md)。
 
 ## Search Config
 
@@ -212,7 +217,7 @@ OUTPUT_MODE=cli
 OUTPUT_MODE=tui
 ```
 
-`output/index.js` 会根据 `OUTPUT_MODE` 加载内置或外部输出插件。内置模式对应 `output/<mode>/` 目录（如 `output/cli`、`output/tui`），每个模式实现相同的输出契约：`thinking` / `content` / `tool` / `error` 子输出。外部插件可以使用 `codeagent-output-<mode>` 的 npm 包名。
+`output/index.js` 会根据 `OUTPUT_MODE` 加载内置或外部输出插件。内置模式对应 `output/<mode>/` 目录（如 `output/cli`、`output/tui`），每个模式实现相同的输出契约：`thinking` / `content` / `tool` / `error` 子输出，以及可选的 `prompt` 交互收集子输出（`collect(question)`，CLI/TUI 各自独立实现方向键/面板选择）。外部插件可以使用 `codeagent-output-<mode>` 的 npm 包名。
 
 ## Notes
 

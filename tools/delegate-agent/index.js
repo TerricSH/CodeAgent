@@ -39,6 +39,7 @@ async function handler({ agent: agentName, task }, context) {
     const Output = require('../../output');
     const runAgentLoop = require('../../agent-runner');
     const { createDefaultRegistry } = require('../../plugins');
+    const { baseToolName } = require('../../context/plugins');
 
     const subSession = new Session({
         metadata: {
@@ -47,7 +48,9 @@ async function handler({ agent: agentName, task }, context) {
         },
     });
 
-    const subPlugins = createDefaultRegistry({ scope: 'agent' });
+    const subOutput = new Output();
+    // 通用能力注入：与主循环一致，宿主只提供 output 交互层，不感知任何具体插件。
+    const subPlugins = createDefaultRegistry({ scope: 'agent', services: { output: subOutput } });
     const subToolRegistry = tools.createRegistry(subPlugins.getTools());
     const subContext = new Context(agentConfig.prompt, {
         sessionId: subSession.id,
@@ -56,11 +59,11 @@ async function handler({ agent: agentName, task }, context) {
     await subPlugins.init(subContext);
     subContext.addUser(task);
 
-    const subOutput = new Output();
-
-    // 过滤子 agent 允许的工具
+    // 工具白名单：兼容完整命名空间名与基名，避免插件工具（如 task-ledger__task_ledger）被基名白名单漏掉。
     const allowedTools = agentConfig.tools
-        ? subToolRegistry.definitions.filter(t => agentConfig.tools.includes(t.function.name))
+        ? subToolRegistry.definitions.filter(t =>
+            agentConfig.tools.includes(t.function.name) ||
+            agentConfig.tools.includes(baseToolName(t.function.name)))
         : subToolRegistry.definitions;
 
     // 子会话独立持久化：消息快照 + 扩展态在同一事务原子落库。

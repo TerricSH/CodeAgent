@@ -46,8 +46,8 @@ const definition = {
     },
 };
 
-async function handler(args, context, ledger) {
-    if (!ledger) return 'task_ledger 不可用';
+async function handler(args, context, ext) {
+    if (!ext) return 'task_ledger 不可用';
 
     try {
         switch (args.action) {
@@ -56,14 +56,14 @@ async function handler(args, context, ledger) {
                     ? args.items
                     : (args.title ? [args.title] : []);
                 if (titles.length === 0) return '添加失败: title 或 items 必填';
-                const added = titles.map(t => ledger.add(t, args.note || ''));
+                const added = titles.map(t => ext.add(t, args.note || ''));
                 return `已添加:\n${added.map(formatItem).join('\n')}`;
             }
             case 'list':
-                return formatList(ledger.list());
+                return formatList(ext.list());
             case 'update': {
                 if (!args.id) return '更新失败: id 必填';
-                const item = ledger.update(args.id, {
+                const item = ext.update(args.id, {
                     title: args.title,
                     status: args.status,
                     note: args.note,
@@ -73,18 +73,18 @@ async function handler(args, context, ledger) {
             }
             case 'complete': {
                 if (!args.id) return '完成失败: id 必填';
-                const item = ledger.complete(args.id, args.note);
+                const item = ext.complete(args.id, args.note);
                 if (!item) return `完成失败: 未找到 ${args.id}`;
                 return `已完成:\n${formatItem(item)}`;
             }
             case 'block': {
                 if (!args.id) return '阻塞失败: id 必填';
-                const item = ledger.block(args.id, args.note);
+                const item = ext.block(args.id, args.note);
                 if (!item) return `阻塞失败: 未找到 ${args.id}`;
                 return `已标记阻塞:\n${formatItem(item)}`;
             }
             case 'clear':
-                ledger.clear();
+                ext.clear();
                 return '已清空 task ledger';
             default:
                 return `未知 action: ${args.action}`;
