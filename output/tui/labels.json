@@ -5,5 +5,14 @@
   "label.thinkingEnd": "",
   "label.toolCall": "调用工具",
   "label.toolResult": "工具结果",
-  "label.error": "错误"
+  "label.error": "错误",
+  "session.listItem": "{id}  {start}",
+  "session.listEmpty": "（无历史会话）",
+  "session.current": "当前: {id}\n开始: {start}\n消息数: {count}",
+  "session.usageUse": "用法: /session use <id>",
+  "session.help": "可用: /session list | current | new | use <id>",
+  "session.created": "已新建并切换 session: {id}",
+  "session.switched": "已切换 session: {id}（消息数 {count}）",
+  "session.notFound": "未找到 session: {id}",
+  "session.opFailed": "会话操作失败: {id}（{detail}）"
 }

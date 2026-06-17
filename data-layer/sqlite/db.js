@@ -55,7 +55,6 @@ function ensureMessagesSchema(connection) {
 
     if (!tableExists(connection, 'messages')) {
         connection.exec(createMessagesTableSql);
-        connection.exec('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);');
         return;
     }
 
@@ -69,7 +68,6 @@ function ensureMessagesSchema(connection) {
     const contentIsNotNull = contentColumn ? contentColumn.notnull === 1 : false;
 
     if (hasToolCallId && hasToolCalls && hasCreatedAt && hasFinishedAt && !contentIsNotNull) {
-        connection.exec('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);');
         return;
     }
 
@@ -103,7 +101,6 @@ function ensureMessagesSchema(connection) {
 
         connection.exec('DROP TABLE messages;');
         connection.exec('ALTER TABLE messages_v2 RENAME TO messages;');
-        connection.exec('CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id);');
         connection.exec('COMMIT');
     } catch (error) {
         connection.exec('ROLLBACK');
@@ -135,6 +132,8 @@ function initSchema(connection) {
     `);
 
     ensureMessagesSchema(connection);
+    // 支撑“某会话内按 message_index 范围分页/排序”走索引、免额外排序（会话查询/切换用）。
+    connection.exec('CREATE INDEX IF NOT EXISTS idx_messages_session_index ON messages(session_id, message_index);');
 }
 
 function closeDb() {

@@ -102,6 +102,51 @@ function close() {
     closeDb();
 }
 
+const MAX_QUERY_LIMIT = 200;
+
+// 参数化只读查询：调用方决定 select/range/order/role/limit；宿主只守一条安全上限（保护同步主循环）。
+function queryMessages(id, options = {}) {
+    const db = getDb();
+    const select = options.select === 'meta' || options.select === 'preview' ? options.select : 'full';
+    const order = options.order === 'desc' ? 'DESC' : 'ASC';
+    const limit = Math.min(Math.max(1, Number(options.limit) || 50), MAX_QUERY_LIMIT);
+
+    const conds = ['session_id = ?'];
+    const args = [id];
+    if (Number.isInteger(options.beforeIndex)) { conds.push('message_index < ?'); args.push(options.beforeIndex); }
+    if (Number.isInteger(options.afterIndex)) { conds.push('message_index > ?'); args.push(options.afterIndex); }
+    if (options.role) { conds.push('role = ?'); args.push(options.role); }
+
+    const cols = select === 'meta'
+        ? 'role, message_index, created_at, finished_at'
+        : select === 'preview'
+            ? 'role, message_index, created_at, finished_at, substr(content, 1, 200) AS content'
+            : 'role, content, timestamp, created_at, finished_at, tool_call_id, tool_calls, metadata, message_index';
+
+    const rows = db.prepare(
+        `SELECT ${cols} FROM messages WHERE ${conds.join(' AND ')} ORDER BY message_index ${order} LIMIT ?`
+    ).all(...args, limit).map((row) => ({
+        role: row.role,
+        message_index: row.message_index,
+        created_at: row.created_at,
+        finished_at: row.finished_at,
+        ...(select !== 'meta' ? { content: row.content } : {}),
+        ...(select === 'full' ? {
+            timestamp: row.timestamp,
+            tool_call_id: row.tool_call_id,
+            tool_calls: parseJson(row.tool_calls),
+            metadata: parseJson(row.metadata),
+        } : {}),
+    }));
+
+    return { items: rows, cursor: rows.length ? rows[rows.length - 1].message_index : null, count: rows.length };
+}
+
+function countMessages(id) {
+    const db = getDb();
+    return db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?').get(id).n;
+}
+
 const SORT_COLUMNS = {
     message_index: 'message_index',
     created_at: 'created_at',
@@ -134,4 +179,4 @@ function getSessionMessages(id, options = {}) {
     }));
 }
 
-module.exports = { saveSession, listSessions, loadSession, getSessionMessages, close };
+module.exports = { saveSession, listSessions, loadSession, getSessionMessages, queryMessages, countMessages, close };

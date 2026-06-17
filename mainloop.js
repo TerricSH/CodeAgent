@@ -1,13 +1,11 @@
 const readline = require('readline');
 require('dotenv').config();
-const Context = require('./context');
 const Output = require('./output');
-const tools = require('./tools');
 const runAgentLoop = require('./agent-runner');
 const Session = require('./session');
-const { buildSystemPrompt } = require('./system-prompt');
 const { labels } = require('./output/cli/labels');
-const { createDefaultRegistry } = require('./plugins');
+const SessionRuntime = require('./runtime/session-runtime');
+const commands = require('./runtime/commands');
 
 async function main() {
     const output = new Output();
@@ -20,44 +18,25 @@ async function main() {
         output.prompt.setInput(rl);
     }
 
-    // 通用能力注入：宿主只提供 output 交互层，不感知任何具体插件。
-    const plugins = createDefaultRegistry({ services: { output } });
-    const toolRegistry = tools.createRegistry(plugins.getTools());
-    const systemPrompt = buildSystemPrompt({
-        basePrompt: process.env.SYSTEM_PROMPT,
-        toolPrompts: toolRegistry.prompts,
-    });
-    const session = new Session();
-    const context = new Context(systemPrompt, {
-        sessionId: session.id,
-        resolveExtension: (name) => plugins.resolveApi(name),
-    });
-    await plugins.init(context);
-
-    // 原子持久化 + 脏标记节流：消息快照与扩展态在同一事务落库，无变化则跳过。
-    let lastSavedCount = 0;
-    function atomicPersist(isClosing = false) {
-        const messages = context.snapshotMessages();
-        const dirty = isClosing || messages.length !== lastSavedCount || plugins.isDirty();
-        if (!dirty) return session.id;
-
-        const id = session.save({
-            messages,
-            metadata: context.metadata,
-            endTime: isClosing ? new Date().toISOString() : null,
-            persist: () => plugins.persistAll(session.id),
-        });
-        lastSavedCount = messages.length;
-        return id;
-    }
+    // 会话运行时：拥有 context/plugins/toolRegistry，负责持久化与“两轮之间”的会话切换。
+    const runtime = await new SessionRuntime({ output }).start();
 
     let closed = false;
     rl.on('close', () => {
         closed = true;
-        const sessionId = atomicPersist(true);
+        const sessionId = runtime.persist({ closing: true });
         console.log(`对话已保存到 SQLite, sessionId: ${sessionId}`);
         Session.close();
     });
+
+    // 切换只在空闲安全点执行：persist-before + 重建替换，绝不在流式/工具/ask-user 中途。
+    // runtime 只返回结构化事件，显示文本由命令层用 labels 格式化。
+    async function applyPendingIfAny() {
+        if (!runtime.hasPending()) return;
+        const event = await runtime.applyPending();
+        const msg = commands.presentEvent(event, { labels });
+        if (msg) console.log(msg);
+    }
 
     function ask() {
         if (closed) return;
@@ -70,17 +49,31 @@ async function main() {
                 return;
             }
 
-            context.addUser(text);
-            atomicPersist();
+            // 命令层（含会话切换）：通用分发，mainloop 不感知有哪些具体命令。
+            const cmd = await commands.dispatch(text, { runtime, labels });
+            if (cmd.handled) {
+                if (cmd.message) console.log(cmd.message);
+                await applyPendingIfAny();
+                return ask();
+            }
+
+            runtime.context.addUser(text);
+            runtime.persist();
 
             try {
-                await runAgentLoop(context, output, { plugins, toolRegistry, persist: () => atomicPersist() });
-                atomicPersist();
+                await runAgentLoop(runtime.context, output, {
+                    plugins: runtime.plugins,
+                    toolRegistry: runtime.toolRegistry,
+                    persist: () => runtime.persist(),
+                });
+                runtime.persist();
             } catch (err) {
-                atomicPersist();
+                runtime.persist();
                 output.error.render(err.message);
             }
 
+            // 模型/工具发起的切换意图，在轮末安全点执行。
+            await applyPendingIfAny();
             ask();
         });
     }

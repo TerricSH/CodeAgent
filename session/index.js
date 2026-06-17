@@ -2,8 +2,9 @@ const sessionRepository = require('../data-layer/repositories/session-repository
 
 class Session {
     constructor(options = {}) {
-        this.id = globalThis.crypto?.randomUUID?.() || Date.now().toString(36);
-        this.startTime = new Date().toISOString();
+        // 支持从已加载会话恢复：传入 id/startTime/metadata 即复用旧会话身份（用于会话切换）。
+        this.id = options.id || globalThis.crypto?.randomUUID?.() || Date.now().toString(36);
+        this.startTime = options.startTime || new Date().toISOString();
         this.metadata = options.metadata || null;
     }
 
@@ -36,6 +37,14 @@ class Session {
 
     static messages(id, options = {}) {
         return sessionRepository.getSessionMessages(id, options);
+    }
+
+    static query(id, options = {}) {
+        return sessionRepository.queryMessages(id, options);
+    }
+
+    static count(id) {
+        return sessionRepository.countMessages(id);
     }
 
     static close() {
