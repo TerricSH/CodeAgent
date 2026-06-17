@@ -1,6 +1,5 @@
 const fs = require('fs');
 const path = require('path');
-const { getLedger } = require('./state');
 const { formatItem, formatList } = require('./format');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
@@ -47,8 +46,7 @@ const definition = {
     },
 };
 
-async function handler(args, context) {
-    const ledger = getLedger(context);
+async function handler(args, context, ledger) {
     if (!ledger) return 'task_ledger 不可用';
 
     try {

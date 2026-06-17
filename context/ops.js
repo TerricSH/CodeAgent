@@ -1,32 +1,26 @@
+// context/ops.js 是 context 私有内核的“消息操作权威”。
+// 所有消息写入都经此规范化（created_at / timestamp / finished_at），
+// 是消息格式的唯一权威。外部不直接引用本模块（仅 Context 类转发）。
 const { cloneMessage } = require('./state');
 
 function nowIso() {
     return new Date().toISOString();
 }
 
-function withTimestamp(message) {
-    if (!message.timestamp) {
-        return { ...message, timestamp: nowIso() };
-    }
+function normalizeMessage(message) {
+    const cloned = cloneMessage(message);
+    const createdAt = cloned.created_at || cloned.timestamp || nowIso();
 
-    return message;
-}
-
-function setPluginState(state, name, value) {
-    state.pluginState[name] = value;
-    return value;
-}
-
-function hasPluginState(state, name) {
-    return Object.prototype.hasOwnProperty.call(state.pluginState, name);
-}
-
-function getPluginState(state, name) {
-    return hasPluginState(state, name) ? state.pluginState[name] : null;
+    return {
+        ...cloned,
+        created_at: createdAt,
+        timestamp: cloned.timestamp || createdAt,
+        finished_at: cloned.finished_at || null,
+    };
 }
 
 function addMessage(state, message) {
-    const normalized = withTimestamp(cloneMessage(message));
+    const normalized = normalizeMessage(message);
     state.messages.push(normalized);
     return normalized;
 }
@@ -51,11 +45,12 @@ function addAssistantToolCalls(state, toolCalls) {
     });
 }
 
-function addToolResult(state, toolCallId, result) {
+function addToolResult(state, toolCallId, result, options = {}) {
     return addMessage(state, {
         role: 'tool',
         tool_call_id: toolCallId,
         content: typeof result === 'string' ? result : JSON.stringify(result),
+        finished_at: options.finishedAt || null,
     });
 }
 
@@ -64,18 +59,15 @@ function getMessages(state, systemMessage) {
 }
 
 function snapshotMessages(state) {
-    return state.messages.map((message) => cloneMessage(withTimestamp(message)));
+    return state.messages.map((message) => normalizeMessage(message));
 }
 
 function clear(state) {
     state.messages = [];
-    state.pluginState = Object.create(null);
 }
 
 module.exports = {
-    setPluginState,
-    getPluginState,
-    hasPluginState,
+    normalizeMessage,
     addMessage,
     addUser,
     addAssistant,

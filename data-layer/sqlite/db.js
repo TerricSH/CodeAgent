@@ -123,6 +123,14 @@ function initSchema(connection) {
             embedding BLOB
         );
 
+        CREATE TABLE IF NOT EXISTS extension_state (
+            session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+            name TEXT NOT NULL,
+            data TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (session_id, name)
+        );
+
         CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
     `);
 

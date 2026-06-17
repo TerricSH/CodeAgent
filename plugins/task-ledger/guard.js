@@ -1,8 +1,7 @@
-const { getLedger } = require('./state');
 const { formatItem } = require('./format');
 
-function buildReminder(context) {
-    const ledger = getLedger(context);
+// guard 不再写死插件名，也不从 context 取状态；ledger 由宿主在执行期注入（ext）。
+function buildReminder(context, ledger) {
     if (!ledger || !ledger.hasOpenItems()) return null;
 
     return [
@@ -12,8 +11,7 @@ function buildReminder(context) {
     ].join('\n');
 }
 
-function shouldContinue(context) {
-    const ledger = getLedger(context);
+function shouldContinue(context, ledger) {
     if (!ledger || !ledger.hasItems()) return false;
     return ledger.hasOpenItems();
 }

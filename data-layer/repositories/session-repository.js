@@ -50,6 +50,11 @@ function saveSession(sessionData) {
                 serialize(msg.metadata)
             );
         });
+
+        // 原子持久化：扩展状态在同一事务内落库，与消息一起提交或一起回滚，杜绝半存。
+        if (typeof sessionData.persist === 'function') {
+            sessionData.persist();
+        }
     });
 
     transaction();

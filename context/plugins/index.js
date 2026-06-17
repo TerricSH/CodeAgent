@@ -1,8 +1,16 @@
+// 扩展（插件）注册表 / 宿主编排器。
+// 负责：所有权绑定、工具命名空间化、执行期注入 ext、原子持久化编排、
+// hydrate 时机、隔离与降级。扩展状态本体不进 context。
+const NAMESPACE_SEPARATOR = '__';
+
 class PluginRegistry {
-    constructor(plugins = []) {
+    constructor(options = {}) {
         this.entries = [];
-        for (const plugin of plugins) {
-            this.register(plugin);
+        this.storeFactory = typeof options.storeFactory === 'function' ? options.storeFactory : null;
+        if (Array.isArray(options.plugins)) {
+            for (const plugin of options.plugins) {
+                this.register(plugin);
+            }
         }
     }
 
@@ -15,8 +23,7 @@ class PluginRegistry {
             return null;
         }
 
-        const entry = { plugin, config };
-        this.entries.push(entry);
+        this.entries.push({ plugin, config, owner: plugin.name, extension: null });
         return plugin;
     }
 
@@ -29,12 +36,57 @@ class PluginRegistry {
         return entry ? entry.plugin : null;
     }
 
+    // 初始化每个扩展：注入作用域 store + config，得到扩展实例；随后 hydrate。
+    // 单个扩展 hydrate 失败按降级处理，不影响其它扩展与主流程。
     async init(context) {
-        for (const { plugin, config } of this.entries) {
-            if (plugin.init) {
-                await plugin.init(context, config);
+        for (const entry of this.entries) {
+            const store = this.storeFactory ? this.storeFactory(entry.plugin.name) : null;
+            const extension = entry.plugin.init
+                ? await entry.plugin.init(context, { store, config: entry.config })
+                : null;
+            entry.extension = extension || null;
+
+            if (entry.extension && typeof entry.extension.hydrate === 'function') {
+                try {
+                    entry.extension.hydrate(context.sessionId);
+                } catch (err) {
+                    // 降级：旧版本/损坏/缺失 → 保持空状态，不让恢复整体失败。
+                }
             }
         }
+    }
+
+    // 解析扩展对外公开 API（即 tools/guards 拿到的 ext）。
+    resolveApi(name) {
+        const entry = this.entries.find((e) => e.plugin.name === name);
+        return entry && entry.extension && typeof entry.extension.getApi === 'function'
+            ? entry.extension.getApi()
+            : null;
+    }
+
+    hydrateAll(sessionId) {
+        for (const entry of this.entries) {
+            if (entry.extension && typeof entry.extension.hydrate === 'function') {
+                entry.extension.hydrate(sessionId);
+            }
+        }
+    }
+
+    // 在宿主事务内被调用：把每个扩展状态写入 store（同一连接 → 原子）。
+    persistAll(sessionId) {
+        for (const entry of this.entries) {
+            if (entry.extension && typeof entry.extension.persist === 'function') {
+                entry.extension.persist(sessionId);
+            }
+        }
+    }
+
+    // 脏标记：任一扩展声明自己有未保存变更即为脏。
+    isDirty() {
+        return this.entries.some((entry) =>
+            entry.extension && typeof entry.extension.isDirty === 'function'
+                ? entry.extension.isDirty()
+                : false);
     }
 
     async onBeforeTurn(context) {
@@ -49,18 +101,53 @@ class PluginRegistry {
         await this._runHook('onToolResult', context, toolCall, result);
     }
 
+    // 工具贡献：定义静态可枚举；名称按 owner 命名空间化（D3）；
+    // 执行期通过 context.getExtension(owner) 注入 ext，代码内无插件名字面量。
     getTools(context) {
-        return this.entries.flatMap(({ plugin }) => {
-            if (plugin.getTools) return plugin.getTools(context);
-            return plugin.tools || [];
+        return this.entries.flatMap((entry) => {
+            const tools = entry.plugin.getTools
+                ? entry.plugin.getTools(context)
+                : (entry.plugin.tools || []);
+            return tools.map((tool) => this._wrapTool(tool, entry.plugin.name));
         });
     }
 
+    _wrapTool(tool, owner) {
+        const baseName = tool.definition.function.name;
+        const namespaced = `${owner}${NAMESPACE_SEPARATOR}${baseName}`;
+
+        return {
+            prompt: tool.prompt,
+            definition: {
+                ...tool.definition,
+                function: { ...tool.definition.function, name: namespaced },
+            },
+            handler: (args, context) => {
+                const ext = context && typeof context.getExtension === 'function'
+                    ? context.getExtension(owner)
+                    : null;
+                return tool.handler(args, context, ext);
+            },
+        };
+    }
+
+    // 续转守卫贡献：同样在执行期注入 ext，turn-continuation 无需感知 owner。
     getContinuationGuards(context) {
-        return this.entries.flatMap(({ plugin }) => {
-            if (plugin.getContinuationGuards) return plugin.getContinuationGuards(context);
-            return plugin.continuationGuards || [];
+        return this.entries.flatMap((entry) => {
+            const guards = entry.plugin.getContinuationGuards
+                ? entry.plugin.getContinuationGuards(context)
+                : (entry.plugin.continuationGuards || []);
+            const owner = entry.plugin.name;
+
+            return guards.map((guard) => ({
+                shouldContinue: (ctx) => guard.shouldContinue(ctx, this._extFor(ctx, owner)),
+                buildReminder: (ctx) => guard.buildReminder(ctx, this._extFor(ctx, owner)),
+            }));
         });
+    }
+
+    _extFor(ctx, owner) {
+        return ctx && typeof ctx.getExtension === 'function' ? ctx.getExtension(owner) : null;
     }
 
     async _runHook(name, ...args) {

@@ -28,7 +28,7 @@ const definition = {
     },
 };
 
-async function handler({ agent: agentName, task }) {
+async function handler({ agent: agentName, task }, context) {
     const agentConfig = agents.get(agentName);
     if (!agentConfig) return `未知 agent: ${agentName}`;
 
@@ -49,7 +49,10 @@ async function handler({ agent: agentName, task }) {
 
     const subPlugins = createDefaultRegistry({ scope: 'agent' });
     const subToolRegistry = tools.createRegistry(subPlugins.getTools());
-    const subContext = new Context(agentConfig.prompt, { sessionId: subSession.id });
+    const subContext = new Context(agentConfig.prompt, {
+        sessionId: subSession.id,
+        resolveExtension: (name) => subPlugins.resolveApi(name),
+    });
     await subPlugins.init(subContext);
     subContext.addUser(task);
 
@@ -60,21 +63,24 @@ async function handler({ agent: agentName, task }) {
         ? subToolRegistry.definitions.filter(t => agentConfig.tools.includes(t.function.name))
         : subToolRegistry.definitions;
 
+    // 子会话独立持久化：消息快照 + 扩展态在同一事务原子落库。
+    const persistSub = () => subSession.save({
+        messages: subContext.snapshotMessages(),
+        metadata: {
+            ...(subSession.metadata || {}),
+            parentSessionId: (context && context.sessionId) || null,
+        },
+        persist: () => subPlugins.persistAll(subSession.id),
+    });
+
     const result = await runAgentLoop(subContext, subOutput, {
         tools: allowedTools,
         toolRegistry: subToolRegistry,
         plugins: subPlugins,
+        persist: persistSub,
     });
 
-    // Persist subagent conversation as an independent session.
-    subSession.save({
-        messages: subContext.messages.map((msg) => ({ ...msg })),
-        metadata: {
-            ...subSession.metadata,
-            parentSessionId: context.sessionId || null,
-        },
-        endTime: new Date().toISOString(),
-    });
+    persistSub();
 
     return result || '[子 agent 未返回结果]';
 }

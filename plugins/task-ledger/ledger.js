@@ -62,6 +62,12 @@ class TaskLedger {
         return this.items.slice().sort((a, b) => a.order - b.order);
     }
 
+    restore(items) {
+        this.items = Array.isArray(items) ? items.map((i) => ({ ...i })) : [];
+        this._nextOrder = this.items.reduce((max, i) => Math.max(max, i.order || 0), 0) + 1;
+        this._emit('restored', null);
+    }
+
     openItems() {
         return this.items.filter(i => i.status === 'pending' || i.status === 'in_progress');
     }

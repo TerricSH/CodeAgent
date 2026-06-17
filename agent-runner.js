@@ -38,6 +38,8 @@ async function runAgentLoop(context, output, options = {}) {
     validateToolRegistry(toolDefs, toolRegistry);
     const chatOptions = { tools: toolDefs };
     const plugins = options.plugins || null;
+    // 安全保存点回调：仅在“消息成对完整 + 扩展态已结算”的边界调用。
+    const persist = typeof options.persist === 'function' ? options.persist : null;
 
     while (true) {
         const state = dispatcher.createState();
@@ -55,10 +57,14 @@ async function runAgentLoop(context, output, options = {}) {
 
             if (plugins) await plugins.onAfterTurn(context, state);
 
+            // 安全保存点：assistant 回复已落定。
+            if (persist) persist();
+
             const guards = plugins ? plugins.getContinuationGuards(context) : [];
             const continuation = turnContinuation.evaluate(context, guards);
             if (continuation.shouldContinue) {
                 context.addUser(continuation.reminder);
+                if (persist) persist();
                 continue;
             }
 
@@ -86,6 +92,9 @@ async function runAgentLoop(context, output, options = {}) {
             context.addToolResult(id, result, { finishedAt });
             if (plugins) await plugins.onToolResult(context, toolCall, result);
         }
+
+        // 安全保存点：整组工具结果已写入且配对完整、插件态已结算。
+        if (persist) persist();
     }
 }
 

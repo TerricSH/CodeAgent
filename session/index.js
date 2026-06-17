@@ -20,6 +20,7 @@ class Session {
             endTime,
             metadata,
             messages,
+            persist: options.persist,
         });
 
         return this.id;

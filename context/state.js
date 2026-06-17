@@ -1,3 +1,5 @@
+// context/state.js 是 context 私有内核的“数据形状权威”。
+// 只描述上下文状态长什么样，不包含任何操作逻辑或插件状态。
 function cloneMessage(message) {
     return {
         ...message,
@@ -19,7 +21,6 @@ function createContextState(options = {}) {
         metadata: options.metadata && typeof options.metadata === 'object'
             ? { ...options.metadata }
             : {},
-        pluginState: Object.create(null),
         messages: Array.isArray(options.messages)
             ? options.messages.map(cloneMessage)
             : [],

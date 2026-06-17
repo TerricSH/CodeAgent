@@ -18,7 +18,10 @@ async function main() {
     });
     const output = new Output();
     const session = new Session();
-    const context = new Context(systemPrompt, { sessionId: session.id });
+    const context = new Context(systemPrompt, {
+        sessionId: session.id,
+        resolveExtension: (name) => plugins.resolveApi(name),
+    });
     await plugins.init(context);
 
     const rl = readline.createInterface({
@@ -26,30 +29,27 @@ async function main() {
         output: process.stdout,
     });
 
-    function snapshotMessages(ctx) {
-        return ctx.messages.map((msg) => {
-            const createdAt = msg.created_at || msg.timestamp || new Date().toISOString();
-            if (!msg.timestamp) msg.timestamp = createdAt;
-            if (!msg.created_at) msg.created_at = createdAt;
-            return {
-                ...msg,
-                finished_at: msg.finished_at || null,
-            };
-        });
-    }
+    // 原子持久化 + 脏标记节流：消息快照与扩展态在同一事务落库，无变化则跳过。
+    let lastSavedCount = 0;
+    function atomicPersist(isClosing = false) {
+        const messages = context.snapshotMessages();
+        const dirty = isClosing || messages.length !== lastSavedCount || plugins.isDirty();
+        if (!dirty) return session.id;
 
-    function persistSession(isClosing = false) {
-        return session.save({
-            messages: snapshotMessages(context),
+        const id = session.save({
+            messages,
             metadata: context.metadata,
             endTime: isClosing ? new Date().toISOString() : null,
+            persist: () => plugins.persistAll(session.id),
         });
+        lastSavedCount = messages.length;
+        return id;
     }
 
     let closed = false;
     rl.on('close', () => {
         closed = true;
-        const sessionId = persistSession(true);
+        const sessionId = atomicPersist(true);
         console.log(`对话已保存到 SQLite, sessionId: ${sessionId}`);
         Session.close();
     });
@@ -66,13 +66,13 @@ async function main() {
             }
 
             context.addUser(text);
-            persistSession();
+            atomicPersist();
 
             try {
-                await runAgentLoop(context, output, { plugins, toolRegistry });
-                persistSession();
+                await runAgentLoop(context, output, { plugins, toolRegistry, persist: () => atomicPersist() });
+                atomicPersist();
             } catch (err) {
-                persistSession();
+                atomicPersist();
                 output.error.render(err.message);
             }
 
