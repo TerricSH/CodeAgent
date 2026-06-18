@@ -38,6 +38,7 @@ async function handler({ agent: agentName, task }, context) {
     const Context = require('../../context');
     const Output = require('../../output');
     const runAgentLoop = require('../../agent-runner');
+    const providers = require('../../model-providers');
     const { createDefaultRegistry } = require('../../plugins');
     const { baseToolName } = require('../../context/plugins');
 
@@ -49,11 +50,16 @@ async function handler({ agent: agentName, task }, context) {
     });
 
     const subOutput = new Output();
+    // 子 agent 模型：用 agent 自己声明的 "厂商/模型" 引用（可与主 agent 完全不同的厂商/模型，
+    // 用更便宜/更快的模型省成本提效）；未声明则用默认模型。模型无状态，直接解析。
+    const subClient = agentConfig.model ? providers.resolve(agentConfig.model) : providers.resolveDefault();
     // 通用能力注入：与主循环一致，宿主只提供 output 交互层，不感知任何具体插件。
     const subPlugins = createDefaultRegistry({ scope: 'agent', services: { output: subOutput } });
     const subToolRegistry = tools.createRegistry(subPlugins.getTools());
     const subContext = new Context(agentConfig.prompt, {
         sessionId: subSession.id,
+        // 上下文窗口取自子 agent 实际所用的 client，与主 agent 完全隔离。
+        maxContextTokens: subClient.maxContextTokens,
         resolveExtension: (name) => subPlugins.resolveApi(name),
     });
     await subPlugins.init(subContext);
@@ -81,6 +87,7 @@ async function handler({ agent: agentName, task }, context) {
         toolRegistry: subToolRegistry,
         plugins: subPlugins,
         persist: persistSub,
+        client: subClient,
     });
 
     persistSub();

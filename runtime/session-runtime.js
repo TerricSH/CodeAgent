@@ -35,6 +35,8 @@ class SessionRuntime {
             sessionId: sessionInstance.id,
             metadata: loaded ? loaded.metadata : undefined,
             messages: loaded ? loaded.messages : undefined,
+            // 不再从模型读预算：SessionRuntime 不拥有模型。token 预算由宿主（mainloop）
+            // 从公共 ModelRuntime 同步进来（setMaxContextTokens），会话层对模型无感知。
             resolveExtension: (name) => plugins.resolveApi(name),
         });
         // 插件按新 sessionId hydrate；systemPrompt 动态分段随新会话重建。

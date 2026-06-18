@@ -1,12 +1,17 @@
 const OpenAI = require('openai');
+const BaseInterface = require('./base-interface');
 
-class ModelClient {
-    constructor({ apiKey, baseURL, model }) {
-        this.client = new OpenAI({ apiKey, baseURL });
-        this.model = model;
+// OpenAI 兼容接口（默认实现）：走官方 OpenAI SDK 流式接口。
+// 纯标准兼容的厂商直接用本类；有私货的厂商在 vendors/ 下继承本类覆写
+// （如覆写 buildParams 加特殊参数，或覆写 chat 改鉴权/headers）。
+class OpenAICompatible extends BaseInterface {
+    constructor(conn = {}) {
+        super(conn);
+        this.client = new OpenAI({ apiKey: this.apiKey, baseURL: this.baseURL });
     }
 
-    async *chat(messages, options = {}) {
+    // 可覆写：构建请求参数（厂商可加自家特殊参数）。
+    buildParams(messages, options) {
         const params = {
             model: this.model,
             messages,
@@ -17,9 +22,15 @@ class ModelClient {
         if (options.tools && options.tools.length > 0) {
             params.tools = options.tools;
         }
+        return params;
+    }
 
-        const stream = await this.client.chat.completions.create(params);
+    async *chat(messages, options = {}) {
+        if (!this.model) {
+            throw new Error('未配置模型：请设置 MODEL_NAME 环境变量，或为该 agent 指定 model。');
+        }
 
+        const stream = await this.client.chat.completions.create(this.buildParams(messages, options));
         const toolCalls = {};
 
         for await (const chunk of stream) {
@@ -60,4 +71,4 @@ class ModelClient {
     }
 }
 
-module.exports = ModelClient;
+module.exports = OpenAICompatible;

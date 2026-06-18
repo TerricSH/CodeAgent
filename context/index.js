@@ -27,6 +27,11 @@ class Context {
         this.state.metadata = value && typeof value === 'object' ? value : {};
     }
 
+    // 由宿主同步当前模型的上下文窗口（token 预算）。Context 不感知模型，只收一个数字。
+    setMaxContextTokens(value) {
+        this.state.maxContextTokens = Number.isInteger(value) && value > 0 ? value : null;
+    }
+
     // 只读副本：冻结每条消息与数组，外部不能改动内部状态（边界 1 = B）。
     get messages() {
         return Object.freeze(this.state.messages.map((msg) => Object.freeze(ops.normalizeMessage(msg))));
@@ -56,6 +61,11 @@ class Context {
     // 传输态：把 system prompt 拼到最前给模型；存储态不含 system（边界 3）。
     getMessages() {
         return ops.getMessages(this.state, this.systemPrompt.toMessage());
+    }
+
+    // 只读用量快照：估算已用 token（历史 + system）、限额、剩余、明细。供 UI 实时显示，不改状态。
+    usage() {
+        return ops.usage(this.state, this.systemPrompt.toMessage());
     }
 
     // 安全保存点用：返回规范化后的消息快照（边界 5）。

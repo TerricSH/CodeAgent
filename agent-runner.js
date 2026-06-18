@@ -1,4 +1,3 @@
-const client = require('./client');
 const EventDispatcher = require('./event-dispatcher');
 const tools = require('./tools');
 const turnContinuation = require('./runtime/turn-continuation');
@@ -33,6 +32,11 @@ function validateToolRegistry(toolDefs, toolRegistry) {
 
 async function runAgentLoop(context, output, options = {}) {
     const dispatcher = new EventDispatcher(output);
+    // 模型由宿主注入（公共 ModelRuntime 或具体连接）；runner 不感知模型来源，只调 chat。
+    const client = options.client;
+    if (!client || typeof client.chat !== 'function') {
+        throw new Error('runAgentLoop 需要注入 options.client（提供 chat 的模型运行时/连接）');
+    }
     const toolRegistry = options.toolRegistry || tools;
     const toolDefs = options.tools || toolRegistry.definitions || [];
     validateToolRegistry(toolDefs, toolRegistry);

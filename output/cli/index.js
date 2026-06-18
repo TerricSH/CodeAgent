@@ -3,6 +3,7 @@ const ContentOutput = require('./content-output');
 const ToolOutput = require('./tool-output');
 const ErrorOutput = require('./error-output');
 const PromptOutput = require('./prompt-output');
+const StatusOutput = require('./status-output');
 
 class CLIOutput {
     constructor(stream) {
@@ -12,6 +13,7 @@ class CLIOutput {
         this.tool = new ToolOutput(this.stream);
         this.error = new ErrorOutput(this.stream);
         this.prompt = new PromptOutput(this.stream);
+        this.status = new StatusOutput(this.stream);
     }
 }
 

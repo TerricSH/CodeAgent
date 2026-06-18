@@ -5,6 +5,7 @@ const runAgentLoop = require('./agent-runner');
 const Session = require('./session');
 const { labels } = require('./output/cli/labels');
 const SessionRuntime = require('./runtime/session-runtime');
+const ModelRuntime = require('./runtime/model-runtime');
 const commands = require('./runtime/commands');
 
 async function main() {
@@ -18,8 +19,13 @@ async function main() {
         output.prompt.setInput(rl);
     }
 
+    // 公共模型运行时：拥有当前模型连接，与 session 解耦；mainloop 只调它的接口。
+    const modelRuntime = new ModelRuntime();
+
     // 会话运行时：拥有 context/plugins/toolRegistry，负责持久化与“两轮之间”的会话切换。
     const runtime = await new SessionRuntime({ output }).start();
+    // 宿主把当前模型的上下文窗口同步给 Context 作 token 预算（Context 不感知模型）。
+    runtime.context.setMaxContextTokens(modelRuntime.maxContextTokens);
 
     let closed = false;
     rl.on('close', () => {
@@ -34,12 +40,16 @@ async function main() {
     async function applyPendingIfAny() {
         if (!runtime.hasPending()) return;
         const event = await runtime.applyPending();
+        // 会话重建后，宿主重新把当前模型预算同步给新的 Context。
+        runtime.context.setMaxContextTokens(modelRuntime.maxContextTokens);
         const msg = commands.presentEvent(event, { labels });
         if (msg) console.log(msg);
     }
 
     function ask() {
         if (closed) return;
+        // 上下文用量状态栏（CLI）：每次输入前显示当前已用/限额。
+        if (output.status) output.status.render(runtime.context.usage());
         const userPrompt = labels['prompt.user'] || '你';
         rl.question(`${userPrompt}: `, async (input) => {
             const text = input.trim();
@@ -65,6 +75,7 @@ async function main() {
                     plugins: runtime.plugins,
                     toolRegistry: runtime.toolRegistry,
                     persist: () => runtime.persist(),
+                    client: modelRuntime,
                 });
                 runtime.persist();
             } catch (err) {

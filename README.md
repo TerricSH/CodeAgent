@@ -36,7 +36,32 @@ SYSTEM_PROMPT=You are a helpful AI assistant.
 OUTPUT_MODE=cli
 ```
 
-当前使用 OpenAI-compatible chat completions 接口。
+默认厂商走 OpenAI-compatible 接口（见下文 Model Providers）。
+
+## Model Providers
+
+模型接入按「厂商 / 兼容接口 / 模型」组织，位于 `model-providers/`：
+
+- **兼容接口（`interfaces/`）**：某种线格式如何构建请求、解析流、分类成统一事件（`thinking` / `content` / `tool_calls`），并自带默认实现。内置 `openai`（OpenAI 兼容）、`anthropic`（Anthropic 兼容）。
+- **厂商（`config.json` 的 `vendors`）**：身份 + 凭证 + **声明它实现哪些接口（可多个）** + 各接口的连接/模型表。厂商通过【组合】选用接口（不是继承），所以同一厂商可同时实现 `openai` 和 `anthropic`。
+- **模型**：每个模型的出厂属性（上下文窗口 `maxContextTokens`）。访问链接与窗口属于出厂属性，凭证（apiKey）走 env，使用方不手动拼装。
+
+选型用引用 `厂商[@接口]/模型`：
+
+- `anthropic/claude-sonnet-4-5` —— 用厂商的默认接口（声明里的第一个）。
+- `mimo/mimo-v2.5` —— 默认接口 + 指定模型；省略模型则用该接口的 `modelEnv`。
+- `mimo@anthropic/<model>` —— 显式选用该厂商的 `anthropic` 接口。
+
+默认厂商由 `config.json` 的 `default` 指定。主 agent 用默认厂商；子 agent 可在 [agents](agents/) 配置里用 `model: '厂商[@接口]/模型'` 指定**完全不同**的厂商/模型（省成本提效），与主 agent 完全隔离。
+
+新增厂商：
+
+1. **纯标准兼容**：在 `model-providers/config.json` 的 `vendors` 加一条，`interfaces` 下列出它支持的接口（各自连接 + 模型表）。无需写代码。
+2. **有私货**（如 DeepSeek 加强 tool_call / 推理回传，或 Copilot 特殊鉴权）：在 `model-providers/vendors/<name>.js` 里继承对应接口默认实现、覆写差异点，导出 `{ 接口名: 覆写类 }`，并在该厂商 config 加 `"impl": "<name>"`。
+
+新增一种兼容接口 = 加 `model-providers/interfaces/<name>.js` 并在 `model-providers/index.js` 的 `INTERFACES` 登记。
+
+上下文裁撤（按 token 预算整条递归裁）由 `Context` 统一执行，预算取自所用厂商解析出的 `maxContextTokens`；provider 只负责发送与接口翻译，不做裁撤。
 
 ## UI Labels Config
 
@@ -190,8 +215,8 @@ data-layer/
 ```text
 mainloop.js              # CLI 主循环
 agent-runner.js          # Agent 对话与工具调用循环
-client.js                # 模型客户端实例
-model.js                 # 模型 API 封装
+client.js                # 默认模型 client（解析自 model-providers）
+model-providers/         # 模型接入：厂商/兼容接口/模型（含 interfaces/ 接口与 vendors/ 私货覆写）
 context/                 # 对话上下文
 plugins/                 # 运行时插件
 runtime/                 # Agent 运行时流程辅助模块
