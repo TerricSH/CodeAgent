@@ -1,9 +1,11 @@
-const PluginRegistry = require('../context/plugins');
+const PluginRegistry = require('./registry');
+const { baseToolName } = PluginRegistry;
 const { createScopedStore } = require('../data-layer/repositories/extension-state-repository');
 const taskLedgerPlugin = require('./task-ledger');
 const askUserPlugin = require('./ask-user');
+const autoCompactionPlugin = require('./auto-compaction');
 
-const defaultPlugins = [taskLedgerPlugin, askUserPlugin];
+const defaultPlugins = [taskLedgerPlugin, askUserPlugin, autoCompactionPlugin];
 
 function getPluginConfig(name, options = {}) {
     const pluginOptions = options.plugins || {};
@@ -33,4 +35,6 @@ module.exports = {
     createDefaultRegistry,
     taskLedgerPlugin,
     askUserPlugin,
+    autoCompactionPlugin,
+    baseToolName,
 };

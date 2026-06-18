@@ -37,10 +37,9 @@ function createContextState(options = {}) {
         maxContextTokens: Number.isInteger(options.maxContextTokens)
             ? options.maxContextTokens
             : DEFAULT_MAX_CONTEXT_TOKENS,
-        // 可替换裁撤接口：(messages, ctx) => 整条子集。为空则用内置兜底。
-        contextTrimmer: typeof options.contextTrimmer === 'function'
-            ? options.contextTrimmer
-            : null,
+        // 传输覆盖（transport overlay）：插件经钩子登记的“摘要替最旧前缀”。
+        // { summary: Message, coverEnd: number } 或 null。仅影响传输态，存储态始终全量。
+        transportOverlay: null,
     };
 }
 

@@ -40,7 +40,7 @@ async function handler({ agent: agentName, task }, context) {
     const runAgentLoop = require('../../agent-runner');
     const providers = require('../../model-providers');
     const { createDefaultRegistry } = require('../../plugins');
-    const { baseToolName } = require('../../context/plugins');
+    const { baseToolName } = require('../../plugins');
 
     const subSession = new Session({
         metadata: {
@@ -53,8 +53,21 @@ async function handler({ agent: agentName, task }, context) {
     // 子 agent 模型：用 agent 自己声明的 "厂商/模型" 引用（可与主 agent 完全不同的厂商/模型，
     // 用更便宜/更快的模型省成本提效）；未声明则用默认模型。模型无状态，直接解析。
     const subClient = agentConfig.model ? providers.resolve(agentConfig.model) : providers.resolveDefault();
-    // 通用能力注入：与主循环一致，宿主只提供 output 交互层，不感知任何具体插件。
-    const subPlugins = createDefaultRegistry({ scope: 'agent', services: { output: subOutput } });
+    // 模型能力转发：与主会话一致，给插件（如 auto-compaction 摘要）提供一次性补全；
+    // 子 agent 用自己的 client（可与主 agent 不同），未注入则插件自动降级为不压缩。
+    const subModelService = {
+        async complete(messages, options = {}) {
+            let text = '';
+            for await (const event of subClient.chat(messages, options)) {
+                if (event && event.type === 'content' && typeof event.content === 'string') {
+                    text += event.content;
+                }
+            }
+            return text;
+        },
+    };
+    // 通用能力注入：与主循环一致，宿主只提供 output 交互层与 model 转发，不感知任何具体插件。
+    const subPlugins = createDefaultRegistry({ scope: 'agent', services: { output: subOutput, model: subModelService } });
     const subToolRegistry = tools.createRegistry(subPlugins.getTools());
     const subContext = new Context(agentConfig.prompt, {
         sessionId: subSession.id,

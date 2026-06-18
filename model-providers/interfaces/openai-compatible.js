@@ -63,11 +63,22 @@ class OpenAICompatible extends BaseInterface {
                 const calls = Object.values(toolCalls).map(tc => ({
                     id: tc.id,
                     name: tc.name,
-                    arguments: JSON.parse(tc.arguments),
+                    arguments: safeParseArgs(tc.arguments),
                 }));
                 yield { type: 'tool_calls', calls };
             }
         }
+    }
+}
+
+// 容错解析工具参数：模型可能吐出空串或非法 JSON，解析失败时降级为空对象，
+// 避免在流式生成器内抛错中断整轮（与 anthropic 接口的 safeJSON 行为对齐）。
+function safeParseArgs(str) {
+    if (typeof str !== 'string' || str.trim() === '') return {};
+    try {
+        return JSON.parse(str);
+    } catch {
+        return {};
     }
 }
 

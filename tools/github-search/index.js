@@ -1,12 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const GitHubProvider = require('../../search-providers/github');
+const { config: spConfig } = require('../../search-providers');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
-// Load github provider config from search-providers config
-const spConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'search-providers', 'config.json'), 'utf-8'));
-const github = new GitHubProvider(spConfig.providers?.github || {});
+// 复用 search-providers 已加载（且缺失时已回退默认）的配置，避免在模块加载时再脆弱地直读 config.json。
+const github = new GitHubProvider((spConfig.providers && spConfig.providers.github) || {});
 
 const definition = {
     type: 'function',

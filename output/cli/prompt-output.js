@@ -1,6 +1,34 @@
 const readline = require('readline');
 const BaseOutput = require('../base-output');
 
+// 显示宽度：CJK 全角字符按 2 列计，其余按 1 列。用于截断选项使其单行显示。
+const WIDE = /[\u1100-\u115F\u2E80-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE4F\uFF00-\uFF60\uFFE0-\uFFE6]/;
+
+function charWidth(ch) {
+    return WIDE.test(ch) ? 2 : 1;
+}
+
+function displayWidth(s) {
+    let w = 0;
+    for (const ch of String(s == null ? '' : s)) w += charWidth(ch);
+    return w;
+}
+
+// 把字符串截断到不超过 maxCols 显示列（超出加省略号），保证菜单每项占一行。
+function truncateToWidth(s, maxCols) {
+    s = String(s == null ? '' : s);
+    if (displayWidth(s) <= maxCols) return s;
+    let out = '';
+    let w = 0;
+    for (const ch of s) {
+        const cw = charWidth(ch);
+        if (w + cw > maxCols - 1) break;
+        out += ch;
+        w += cw;
+    }
+    return out + '…';
+}
+
 // 收集器自带的中性兜底文案；具体业务文案由调用方（插件）经 question.labels 传入。
 const DEFAULTS = {
     title: 'Select',
@@ -61,30 +89,51 @@ class PromptOutput extends BaseOutput {
     }
 
     // raw-mode 方向键选择。取消返回 null。
+    // 重绘用「相对光标移动」（上移已绘行数 + 清屏尾），免疫视口滚动；
+    // 选项截断到终端宽度保证每项单行（行数精确）；选完/取消清除菜单并恢复光标。
     _collectByArrows(options, allowFreeform, L) {
         const items = allowFreeform ? [...options, L.custom] : [...options];
         this.writeLine(this.colorize(L.arrowsHint, BaseOutput.colors.gray));
-        // 保存光标到选项区起点；重绘时回到此处并清到屏幕末尾，天然兼容自动换行/多行，无需按行计数。
-        this.write('\x1b7');
+
+        const cols = (this.stream && this.stream.columns) || process.stdout.columns || 80;
+        const maxCols = Math.max(8, cols - 3); // 留出 "❯ " 前缀与右边距
 
         return new Promise((resolve) => {
             let selected = 0;
+            let drawn = 0; // 上次绘制的菜单行数
+
+            const clearMenu = () => {
+                if (drawn > 0) {
+                    this.write(`\x1b[${drawn}A`); // 上移 drawn 行回到菜单起点
+                    this.write('\x1b[0J');         // 清除从光标到屏幕末尾
+                }
+                drawn = 0;
+            };
 
             const draw = () => {
-                this.write('\x1b8');   // 回到保存的光标位置
-                this.write('\x1b[0J'); // 清除从光标到屏幕末尾
+                clearMenu();
                 for (let i = 0; i < items.length; i++) {
+                    const label = truncateToWidth(items[i], maxCols);
                     if (i === selected) {
-                        this.writeLine(this.colorize(`❯ ${items[i]}`, BaseOutput.colors.lightGreen));
+                        this.writeLine(this.colorize(`❯ ${label}`, BaseOutput.colors.lightGreen));
                     } else {
-                        this.writeLine(`  ${items[i]}`);
+                        this.writeLine(`  ${label}`);
                     }
                 }
+                drawn = items.length;
+            };
+
+            const cleanup = () => {
+                process.stdin.removeListener('keypress', onKeypress);
+                if (typeof process.stdin.setRawMode === 'function') process.stdin.setRawMode(false);
+                process.stdin.pause();
+                this.write('\x1b[?25h'); // 恢复光标显示
             };
 
             const onKeypress = (str, key) => {
                 if (!key) return;
                 if (key.ctrl && key.name === 'c') {
+                    clearMenu();
                     cleanup();
                     this.writeLine(this.colorize(L.cancelled, BaseOutput.colors.gray));
                     resolve(null);
@@ -98,6 +147,7 @@ class PromptOutput extends BaseOutput {
                     draw();
                 } else if (key.name === 'return' || key.name === 'enter') {
                     const isCustom = allowFreeform && selected === items.length - 1;
+                    clearMenu(); // 选完清掉菜单，避免与后续输出粘连
                     cleanup();
                     if (isCustom) {
                         this._readLine(L.answer).then(resolve);
@@ -107,16 +157,11 @@ class PromptOutput extends BaseOutput {
                 }
             };
 
-            const cleanup = () => {
-                process.stdin.removeListener('keypress', onKeypress);
-                if (typeof process.stdin.setRawMode === 'function') process.stdin.setRawMode(false);
-                process.stdin.pause();
-            };
-
             if (this.rl) this.rl.pause();
             readline.emitKeypressEvents(process.stdin, this.rl || undefined);
             process.stdin.setRawMode(true);
             process.stdin.resume();
+            this.write('\x1b[?25l'); // 隐藏光标，避免导航时菜单内闪烁
             process.stdin.on('keypress', onKeypress);
             draw();
         });

@@ -23,7 +23,7 @@ async function main() {
     const modelRuntime = new ModelRuntime();
 
     // 会话运行时：拥有 context/plugins/toolRegistry，负责持久化与“两轮之间”的会话切换。
-    const runtime = await new SessionRuntime({ output }).start();
+    const runtime = await new SessionRuntime({ output, model: modelRuntime }).start();
     // 宿主把当前模型的上下文窗口同步给 Context 作 token 预算（Context 不感知模型）。
     runtime.context.setMaxContextTokens(modelRuntime.maxContextTokens);
 

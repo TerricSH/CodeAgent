@@ -81,7 +81,14 @@ async function runAgentLoop(context, output, options = {}) {
         const results = await Promise.all(
             state.pendingToolCalls.map(async (tc) => {
                 output.tool.renderCall(tc.name, tc.arguments);
-                const result = await toolRegistry.execute(tc.name, tc.arguments, context);
+                // 单个工具抛错降级为结果字符串：保证每条 tool_calls 都有配对的 tool 结果，
+                // 否则整组 Promise.all 失败会留下悬空 assistant.tool_calls，污染持久化状态。
+                let result;
+                try {
+                    result = await toolRegistry.execute(tc.name, tc.arguments, context);
+                } catch (err) {
+                    result = `工具执行失败: ${err && err.message ? err.message : String(err)}`;
+                }
                 output.tool.renderResult(tc.name, result);
                 return {
                     id: tc.id,

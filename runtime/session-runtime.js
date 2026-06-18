@@ -8,8 +8,10 @@ const { buildSystemPrompt } = require('../system-prompt');
 // 切换 = 两轮之间的原子重建替换（persist 当前 → 物化目标 → 重建三件套 → 切引用）。
 // Context 对切换无感知：切换只在本层换引用，不进 Context 内部。
 class SessionRuntime {
-    constructor({ output }) {
+    constructor({ output, model }) {
         this.output = output;
+        // 仅转发宿主能力，不拥有模型生命周期（不切换、不读预算）；可为空（降级）。
+        this._model = model || null;
         this.session = null;
         this.context = null;
         this.plugins = null;
@@ -137,6 +139,10 @@ class SessionRuntime {
         const runtime = this;
         return {
             output: this.output,
+            // 模型能力转发：插件（如摘要）经此做一次性补全；宿主未注入则为 null（插件应降级）。
+            model: this._model
+                ? { complete: (messages, options) => runtime._model.complete(messages, options) }
+                : null,
             session: {
                 current: () => runtime.current(),
                 list: () => runtime.list(),

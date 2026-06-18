@@ -1,5 +1,5 @@
 const SystemPrompt = require('./system-prompt');
-const { createContextState } = require('./state');
+const { createContextState, DEFAULT_MAX_CONTEXT_TOKENS } = require('./state');
 const ops = require('./ops');
 
 // Context 是对外兼容外壳：对外暴露稳定 API，内部委托给私有内核 state + ops。
@@ -28,8 +28,33 @@ class Context {
     }
 
     // 由宿主同步当前模型的上下文窗口（token 预算）。Context 不感知模型，只收一个数字。
+    // 窗口未知（null/非法）时回退保守默认值，绝不关闭裁撤——否则未知窗口模型的长会话
+    // 会一直累积直到 API 报 context length 错。
     setMaxContextTokens(value) {
-        this.state.maxContextTokens = Number.isInteger(value) && value > 0 ? value : null;
+        this.state.maxContextTokens = Number.isInteger(value) && value > 0
+            ? value
+            : DEFAULT_MAX_CONTEXT_TOKENS;
+    }
+
+    // 传输覆盖：插件经 onBeforeTurn 登记“摘要替最旧前缀”。仅影响传输态，存储态始终全量。
+    // overlay = { summary, coverEnd }；summary 可为字符串或消息对象（此处规范化）；传 null 清除。
+    setTransportOverlay(overlay) {
+        if (!overlay || !overlay.summary) {
+            this.state.transportOverlay = null;
+            return;
+        }
+        const summary = typeof overlay.summary === 'string'
+            ? { role: 'user', content: overlay.summary }
+            : overlay.summary;
+        this.state.transportOverlay = {
+            summary: ops.normalizeMessage(summary),
+            coverEnd: Number.isInteger(overlay.coverEnd) && overlay.coverEnd > 0 ? overlay.coverEnd : 0,
+        };
+    }
+
+    // 只读：当前传输覆盖（供插件判断是否需要重算摘要）。
+    getTransportOverlay() {
+        return this.state.transportOverlay;
     }
 
     // 只读副本：冻结每条消息与数组，外部不能改动内部状态（边界 1 = B）。

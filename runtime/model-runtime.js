@@ -31,6 +31,18 @@ class ModelRuntime {
         yield* this._client.chat(messages, options);
     }
 
+    // 非流式便捷调用：消耗事件流、拼接 content 文本返回。供插件（如摘要）做一次性补全。
+    // 不需要工具，故不传 tools；纯文本进、纯文本出。
+    async complete(messages, options = {}) {
+        let text = '';
+        for await (const event of this.chat(messages, options)) {
+            if (event && event.type === 'content' && typeof event.content === 'string') {
+                text += event.content;
+            }
+        }
+        return text;
+    }
+
     // 切换当前模型（公共能力，与 session 无关）；返回新信息供宿主同步预算/显示。
     switch(ref) {
         this._client = providers.resolve(ref);
