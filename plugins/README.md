@@ -224,7 +224,7 @@ reg.isDirty();                           // 任一插件有未保存变更
 
 ## 文案归属
 
-- 核心 `output/<mode>/labels.json` 只放**通用 UI 文案**。
+- 核心 `renderers/<mode>/labels.json` 只放**通用 UI 文案**。
 - 插件自带的业务文案放**插件目录内**（如 `plugins/ask-user/labels.js`），经 `collect` 载荷 `question.labels` 传入；收集器仅用自身中性 DEFAULTS 兜底。
 - 这样插件删除后，文案随之消失，不污染核心。
 

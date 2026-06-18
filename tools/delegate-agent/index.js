@@ -36,7 +36,7 @@ async function handler({ agent: agentName, task }, context) {
     const tools = require('../index');
 
     const Context = require('../../context');
-    const Output = require('../../output');
+    const Output = require('../../renderers');
     const runAgentLoop = require('../../agent-runner');
     const providers = require('../../model-providers');
     const { createDefaultRegistry } = require('../../plugins');

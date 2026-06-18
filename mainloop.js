@@ -1,9 +1,9 @@
 const readline = require('readline');
 require('dotenv').config();
-const Output = require('./output');
+const Output = require('./renderers');
 const runAgentLoop = require('./agent-runner');
 const Session = require('./session');
-const { labels } = require('./output/cli/labels');
+const { labels } = require('./renderers/cli/labels');
 const SessionRuntime = require('./runtime/session-runtime');
 const ModelRuntime = require('./runtime/model-runtime');
 const commands = require('./runtime/commands');

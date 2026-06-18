@@ -68,8 +68,8 @@ OUTPUT_MODE=cli
 终端文案默认由配置文件管理（每个输出模式各自一份）：
 
 ```text
-output/cli/labels.json
-output/tui/labels.json
+renderers/cli/labels.json
+renderers/tui/labels.json
 ```
 
 可直接修改对应模式的文件自定义终端前缀文案，无需改动代码。
@@ -102,7 +102,7 @@ UI_LABELS={"prompt.user":"User","prompt.ai":"Bot"}
 - skill 自动激活
 - SQLite 会话保存
 - CLI/TUI 可插拔输出层
-- 终端文案可通过 `output/cli/labels.json` 配置
+- 终端文案可通过 `renderers/cli/labels.json` 配置
 
 ## Skills
 
@@ -174,7 +174,7 @@ module.exports = {
 
 插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态、metadata 和插件状态，不再直接实例化任务清单。
 
-宿主可在创建注册表时通过 `createDefaultRegistry({ services })` 注入通用能力（如 `services.output` 交互层），这些能力会传给每个插件的 `init(context, { store, config, services })`。宿主只提供通用能力、不感知具体插件；插件自带的终端文案随插件存放在插件目录内，不写入核心 `output/<mode>/labels.json`。
+宿主可在创建注册表时通过 `createDefaultRegistry({ services })` 注入通用能力（如 `services.output` 交互层），这些能力会传给每个插件的 `init(context, { store, config, services })`。宿主只提供通用能力、不感知具体插件；插件自带的终端文案随插件存放在插件目录内，不写入核心 `renderers/<mode>/labels.json`。
 
 新增插件规范与接口清单见 [plugins/README.md](plugins/README.md)。
 
@@ -222,7 +222,7 @@ plugins/                 # 运行时插件
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
 data-layer/              # SQLite 与 repository
-output/                  # 输出层插件入口与 CLI/TUI 实现
+renderers/               # 输出层插件入口与 CLI/TUI 实现
 event-dispatcher/        # 模型事件分发
 skills/                  # skill 配置
 agents/                  # subagent 配置
@@ -242,11 +242,11 @@ OUTPUT_MODE=cli
 OUTPUT_MODE=tui
 ```
 
-`output/index.js` 会根据 `OUTPUT_MODE` 加载内置或外部输出插件。内置模式对应 `output/<mode>/` 目录（如 `output/cli`、`output/tui`），每个模式实现相同的输出契约：`thinking` / `content` / `tool` / `error` 子输出，以及可选的 `prompt` 交互收集子输出（`collect(question)`，CLI/TUI 各自独立实现方向键/面板选择）。外部插件可以使用 `codeagent-output-<mode>` 的 npm 包名。
+`renderers/index.js` 会根据 `OUTPUT_MODE` 加载内置或外部输出插件。内置模式对应 `renderers/<mode>/` 目录（如 `renderers/cli`、`renderers/tui`），每个模式实现相同的输出契约：`thinking` / `content` / `tool` / `error` 子输出，以及可选的 `prompt` 交互收集子输出（`collect(question)`，CLI/TUI 各自独立实现方向键/面板选择）。外部插件可以使用 `codeagent-output-<mode>` 的 npm 包名。
 
 ## Notes
 
 - `.env`、搜索配置、GitHub 配置和 `.code/` 数据库都已忽略提交。
 - 工具 prompt 会拼接进系统提示词，应保持简短。
 - 大工具结果会完整传给模型，终端展示由 output 层决定。
-- 终端前缀文案默认读取 `output/cli/labels.json`，无需修改代码。
+- 终端前缀文案默认读取 `renderers/cli/labels.json`，无需修改代码。
