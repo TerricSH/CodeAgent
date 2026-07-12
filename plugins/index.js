@@ -4,8 +4,11 @@ const { createScopedStore } = require('../data-layer/repositories/extension-stat
 const taskLedgerPlugin = require('./task-ledger');
 const askUserPlugin = require('./ask-user');
 const autoCompactionPlugin = require('./auto-compaction');
+const memoryPlugin = require('./memory');
+const PluginError = require('./plugin-error');
+const { definePlugin, validatePlugin } = require('./define-plugin');
 
-const defaultPlugins = [taskLedgerPlugin, askUserPlugin, autoCompactionPlugin];
+const defaultPlugins = [taskLedgerPlugin, askUserPlugin, memoryPlugin, autoCompactionPlugin];
 
 function getPluginConfig(name, options = {}) {
     const pluginOptions = options.plugins || {};
@@ -36,5 +39,9 @@ module.exports = {
     taskLedgerPlugin,
     askUserPlugin,
     autoCompactionPlugin,
+    memoryPlugin,
+    PluginError,
+    definePlugin,
+    validatePlugin,
     baseToolName,
 };

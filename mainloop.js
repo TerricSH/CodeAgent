@@ -28,10 +28,11 @@ async function main() {
     runtime.context.setMaxContextTokens(modelRuntime.maxContextTokens);
 
     let closed = false;
-    rl.on('close', () => {
+    rl.on('close', async () => {
         closed = true;
         const sessionId = runtime.persist({ closing: true });
         console.log(`对话已保存到 SQLite, sessionId: ${sessionId}`);
+        await runtime.dispose('close');
         Session.close();
     });
 

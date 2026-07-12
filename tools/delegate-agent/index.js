@@ -46,6 +46,12 @@ async function handler({ agent: agentName, task }, context) {
         metadata: {
             type: 'subagent',
             agent: agentName,
+            parentSessionId: (context && context.sessionId) || null,
+            rootSessionId: (context && context.metadata && context.metadata.rootSessionId)
+                || (context && context.sessionId)
+                || null,
+            depth: Number(context && context.metadata && context.metadata.depth || 0) + 1,
+            task,
         },
     });
 
@@ -71,6 +77,7 @@ async function handler({ agent: agentName, task }, context) {
     const subToolRegistry = tools.createRegistry(subPlugins.getTools());
     const subContext = new Context(agentConfig.prompt, {
         sessionId: subSession.id,
+        metadata: subSession.metadata,
         // 上下文窗口取自子 agent 实际所用的 client，与主 agent 完全隔离。
         maxContextTokens: subClient.maxContextTokens,
         resolveExtension: (name) => subPlugins.resolveApi(name),
@@ -95,17 +102,19 @@ async function handler({ agent: agentName, task }, context) {
         persist: () => subPlugins.persistAll(subSession.id),
     });
 
-    const result = await runAgentLoop(subContext, subOutput, {
-        tools: allowedTools,
-        toolRegistry: subToolRegistry,
-        plugins: subPlugins,
-        persist: persistSub,
-        client: subClient,
-    });
-
-    persistSub();
-
-    return result || '[子 agent 未返回结果]';
+    try {
+        const result = await runAgentLoop(subContext, subOutput, {
+            tools: allowedTools,
+            toolRegistry: subToolRegistry,
+            plugins: subPlugins,
+            persist: persistSub,
+            client: subClient,
+        });
+        persistSub();
+        return result || '[子 agent 未返回结果]';
+    } finally {
+        await subPlugins.dispose(subContext, { reason: 'subagent-complete' });
+    }
 }
 
 module.exports = { definition, handler, prompt };

@@ -1,5 +1,26 @@
 # CodeAgent
 
+## OpenAI Responses API Provider
+
+Responses models use the OpenAI Responses API. Configure an OpenAI API key in `.env`:
+
+```env
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_RESPONSES_MODEL=your-model-name
+```
+
+Set `default` in `model-providers/config.json` to use it as the main model:
+
+```json
+{
+  "default": "openai@responses/your-model-name"
+}
+```
+
+The full generated configuration also contains the vendor definitions; only change
+the `default` field in that file. This provider uses an OpenAI Platform API key and
+does not reuse interactive login credentials.
+
 一个基础的命令行 AI Agent 实验项目，支持模型对话、工具调用、子 agent、技能提示词、会话保存和可插拔输出层。
 
 ## Start

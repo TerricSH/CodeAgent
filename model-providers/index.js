@@ -4,12 +4,14 @@ require('dotenv').config();
 
 const OpenAICompatible = require('./interfaces/openai-compatible');
 const AnthropicCompatible = require('./interfaces/anthropic-compatible');
+const ResponsesCompatible = require('./interfaces/responses-compatible');
 
 // 兼容接口注册表（默认实现）：厂商在 config 里按名【声明实现哪些】。
 // 新增接口 = 加一个 interfaces/*.js + 在此登记。
 const INTERFACES = {
     openai: OpenAICompatible,
     anthropic: AnthropicCompatible,
+    responses: ResponsesCompatible,
 };
 
 // 厂商私货覆写注册表：厂商有自家加强时，在 vendors/<name>.js 导出 { 接口名: 覆写类 }。
@@ -33,6 +35,14 @@ const DEFAULT_CONFIG = {
                     modelEnv: 'MODEL_NAME',
                     maxContextTokensEnv: 'MODEL_MAX_CONTEXT_TOKENS',
                     models: {},
+                },
+                responses: {
+                    apiKeyEnv: 'OPENAI_API_KEY',
+                    baseURL: 'https://api.openai.com/v1',
+                    modelEnv: 'OPENAI_RESPONSES_MODEL',
+                    models: {
+                        
+                    },
                 },
             },
         },

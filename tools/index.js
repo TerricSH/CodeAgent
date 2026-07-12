@@ -14,7 +14,16 @@ function createRegistry(extraTools = []) {
     const handlers = {};
 
     for (const tool of registeredTools) {
-        handlers[tool.definition.function.name] = tool.handler;
+        const name = tool && tool.definition && tool.definition.function
+            ? tool.definition.function.name
+            : null;
+        if (typeof name !== 'string' || !name || typeof tool.handler !== 'function') {
+            throw new TypeError('Invalid tool registration');
+        }
+        if (Object.prototype.hasOwnProperty.call(handlers, name)) {
+            throw new Error(`Duplicate tool registration: ${name}`);
+        }
+        handlers[name] = tool.handler;
     }
 
     function has(name) {
