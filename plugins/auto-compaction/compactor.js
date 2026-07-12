@@ -46,7 +46,7 @@ class Compactor {
         // 无模型则降级为“从不压缩”（不报错、不影响主流程）。
         this.model = model && typeof model.complete === 'function' ? model : null;
         // 触发阈值：已用/限额 达到此比例才压缩。
-        this.triggerRatio = numberOr(config.triggerRatio, 0.8);
+        this.triggerRatio = numberOr(config.triggerRatio, 0.65);
         // 保留最近多少条消息逐字不压缩。
         this.keepRecentCount = intOr(config.keepRecentCount, 10);
         // 可压缩消息数低于此值则不值得压缩。
@@ -55,36 +55,93 @@ class Compactor {
         this.recompactStep = intOr(config.recompactStep, 8);
         // 摘要长度上限（提示模型用）。
         this.maxSummaryChars = intOr(config.maxSummaryChars, 800);
+        this.activeSummary = null;
+        this.building = null;
+        this.pendingError = null;
+        this.version = 0;
+        this.dirty = false;
+        this.disposed = false;
     }
 
-    // 在 onBeforeTurn 调用：必要时生成/刷新传输覆盖。隔离降级：任何异常只跳过本次。
-    async maybeCompact(context) {
-        if (!this.model) return;
+    hydrate(raw) {
+        if (!raw) return;
+        const state = JSON.parse(raw);
+        if (!state || state.version !== 1) throw new Error('Invalid auto-compaction state');
+        this.activeSummary = state.activeSummary || null;
+        this.version = Number(state.summaryVersion) || 0;
+        this.dirty = false;
+    }
+
+    serialize() {
+        return JSON.stringify({
+            version: 1,
+            summaryVersion: this.version,
+            activeSummary: this.activeSummary,
+        });
+    }
+
+    apply(context) {
+        if (this.pendingError) {
+            const error = this.pendingError;
+            this.pendingError = null;
+            throw error;
+        }
+        if (!this.activeSummary) {
+            context.setTransportOverlay('auto-compaction', null);
+            return;
+        }
+        context.setTransportOverlay('auto-compaction', {
+            priority: 40,
+            version: this.version,
+            coverEnd: this.activeSummary.coverEnd,
+            messages: [formatSummaryContent(this.activeSummary.text)],
+        });
+    }
+
+    schedule(context) {
+        if (!this.model || this.disposed || this.building) return;
 
         const usage = context.usage();
-        if (!usage.limit) return;                                  // 无预算 → 不压缩
-        if (usage.used < usage.limit * this.triggerRatio) return;  // 未达阈值
+        if (!usage.limit) return;
+        if (usage.used < usage.limit * this.triggerRatio) return;
 
         const messages = context.messages;
         const coverEnd = messages.length - this.keepRecentCount;
-        if (coverEnd < this.minCompactCount) return;               // 可压缩的太少
+        if (coverEnd < this.minCompactCount) return;
 
-        const prev = context.getTransportOverlay();
-        const prevEnd = prev ? prev.coverEnd : 0;
-        if (coverEnd <= prevEnd) return;                           // 无新增可覆盖内容
-        if (prev && coverEnd - prevEnd < this.recompactStep) return; // 增量不足，不重算
+        const previousEnd = this.activeSummary ? this.activeSummary.coverEnd : 0;
+        if (coverEnd <= previousEnd) return;
+        if (this.activeSummary && coverEnd - previousEnd < this.recompactStep) return;
 
-        const toSummarize = messages.slice(0, coverEnd);
-        let text;
-        try {
-            text = await this.model.complete(buildSummaryRequest(toSummarize, this.maxSummaryChars));
-        } catch (err) {
-            console.warn(`[auto-compaction] 摘要生成失败，跳过：${err && err.message}`);
-            return;
-        }
-        if (!text || !text.trim()) return;                         // 模型空返回 → 不动
+        const snapshot = messages.slice(previousEnd, coverEnd);
+        const source = this.activeSummary
+            ? [{ role: 'assistant', content: `Previous rolling summary:\n${this.activeSummary.text}` }, ...snapshot]
+            : snapshot;
+        const baseVersion = this.version;
+        const sessionId = context.sessionId;
 
-        context.setTransportOverlay({ summary: formatSummaryContent(text.trim()), coverEnd });
+        this.building = this.model.complete(buildSummaryRequest(source, this.maxSummaryChars))
+            .then((text) => {
+                if (this.disposed || context.sessionId !== sessionId || this.version !== baseVersion) return;
+                if (!text || !text.trim()) return;
+                this.version += 1;
+                this.activeSummary = {
+                    text: text.trim(),
+                    coverEnd,
+                    generatedAt: new Date().toISOString(),
+                };
+                this.dirty = true;
+            })
+            .catch((error) => {
+                if (!this.disposed) this.pendingError = error;
+            })
+            .finally(() => {
+                this.building = null;
+            });
+    }
+
+    dispose() {
+        this.disposed = true;
     }
 }
 

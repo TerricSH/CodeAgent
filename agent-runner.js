@@ -65,7 +65,7 @@ async function runAgentLoop(context, output, options = {}) {
             if (persist) persist();
 
             const guards = plugins ? plugins.getContinuationGuards(context) : [];
-            const continuation = turnContinuation.evaluate(context, guards);
+            const continuation = await turnContinuation.evaluate(context, guards);
             if (continuation.shouldContinue) {
                 context.addUser(continuation.reminder);
                 if (persist) persist();
@@ -76,19 +76,12 @@ async function runAgentLoop(context, output, options = {}) {
         }
 
         // 并行执行工具调用
-        context.addAssistantToolCalls(state.pendingToolCalls);
-
         const results = await Promise.all(
             state.pendingToolCalls.map(async (tc) => {
                 output.tool.renderCall(tc.name, tc.arguments);
                 // 单个工具抛错降级为结果字符串：保证每条 tool_calls 都有配对的 tool 结果，
                 // 否则整组 Promise.all 失败会留下悬空 assistant.tool_calls，污染持久化状态。
-                let result;
-                try {
-                    result = await toolRegistry.execute(tc.name, tc.arguments, context);
-                } catch (err) {
-                    result = `工具执行失败: ${err && err.message ? err.message : String(err)}`;
-                }
+                const result = await toolRegistry.execute(tc.name, tc.arguments, context);
                 output.tool.renderResult(tc.name, result);
                 return {
                     id: tc.id,
@@ -99,8 +92,11 @@ async function runAgentLoop(context, output, options = {}) {
             })
         );
 
-        for (const { id, toolCall, result, finishedAt } of results) {
+        context.addAssistantToolCalls(state.pendingToolCalls);
+        for (const { id, result, finishedAt } of results) {
             context.addToolResult(id, result, { finishedAt });
+        }
+        for (const { toolCall, result } of results) {
             if (plugins) await plugins.onToolResult(context, toolCall, result);
         }
 

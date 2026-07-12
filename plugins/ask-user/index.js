@@ -1,5 +1,6 @@
 const tool = require('./tool');
 const { formatSection } = require('./format');
+const { definePlugin } = require('../define-plugin');
 
 const NAME = 'ask-user';
 const VERSION = 1;
@@ -7,10 +8,14 @@ const VERSION = 1;
 // ask-user 扩展：状态为历史问答记录，按 sessionId 通过注入 store 落库（版本信封）。
 // 交互能力（askUser = output.prompt.collect）由宿主经 config 注入，扩展不感知 CLI/TUI。
 // onBeforeTurn 把已收集信息写入系统提示动态分段，作为模型持续可见的基础信息（Option B）。
-const askUserPlugin = {
+const askUserPlugin = definePlugin({
     name: NAME,
     scope: 'session',
     tools: [tool],
+
+    onError(error) {
+        throw error;
+    },
 
     // 钩子在 plugin 对象上被调用；通过 context.getExtension 取扩展状态。
     onBeforeTurn(context) {
@@ -53,22 +58,12 @@ const askUserPlugin = {
             // 恢复：缺失 → 空状态；版本不符/损坏 → 降级保持空，不抛错。
             hydrate: (sessionId) => {
                 if (!store || !sessionId) return;
-                let raw;
-                try {
-                    raw = store.read(sessionId);
-                } catch {
-                    raw = null;
-                }
+                const raw = store.read(sessionId);
                 if (!raw) return;
 
-                let envelope;
-                try {
-                    envelope = JSON.parse(raw);
-                } catch {
-                    return;
-                }
+                const envelope = JSON.parse(raw);
                 if (!envelope || envelope.version !== VERSION || !Array.isArray(envelope.data)) {
-                    return;
+                    throw new Error(`Invalid ${NAME} state envelope`);
                 }
 
                 records.length = 0;
@@ -85,6 +80,6 @@ const askUserPlugin = {
             },
         };
     },
-};
+});
 
 module.exports = askUserPlugin;

@@ -2,6 +2,8 @@
 // 负责：所有权绑定、工具命名空间化、执行期注入 ext、原子持久化编排、
 // hydrate 时机、隔离与降级。扩展状态本体不进 context。
 const NAMESPACE_SEPARATOR = '__';
+const PluginError = require('./plugin-error');
+const { validatePlugin } = require('./define-plugin');
 
 class PluginRegistry {
     constructor(options = {}) {
@@ -17,12 +19,14 @@ class PluginRegistry {
     }
 
     register(plugin, config = {}) {
-        if (!plugin || !plugin.name) {
-            throw new Error('插件必须提供 name');
-        }
+        validatePlugin(plugin);
 
         if (config.enabled === false) {
             return null;
+        }
+
+        if (this.entries.some((entry) => entry.plugin.name === plugin.name)) {
+            throw new Error(`Duplicate plugin registration: ${plugin.name}`);
         }
 
         this.entries.push({ plugin, config, owner: plugin.name, extension: null });
@@ -43,17 +47,16 @@ class PluginRegistry {
     async init(context) {
         for (const entry of this.entries) {
             const store = this.storeFactory ? this.storeFactory(entry.plugin.name) : null;
-            const extension = entry.plugin.init
-                ? await entry.plugin.init(context, { store, config: entry.config, services: this.services })
-                : null;
+            const extension = await this._invoke(
+                entry,
+                'init',
+                entry.plugin.init,
+                [context, { store, config: entry.config, services: this.services }]
+            );
             entry.extension = extension || null;
 
             if (entry.extension && typeof entry.extension.hydrate === 'function') {
-                try {
-                    entry.extension.hydrate(context.sessionId);
-                } catch (err) {
-                    // 降级：旧版本/损坏/缺失 → 保持空状态，不让恢复整体失败。
-                }
+                await this._invoke(entry, 'hydrate', entry.extension.hydrate, [context.sessionId]);
             }
         }
     }
@@ -61,15 +64,14 @@ class PluginRegistry {
     // 解析扩展对外公开 API（即 tools/guards 拿到的 ext）。
     resolveApi(name) {
         const entry = this.entries.find((e) => e.plugin.name === name);
-        return entry && entry.extension && typeof entry.extension.getApi === 'function'
-            ? entry.extension.getApi()
-            : null;
+        if (!entry || !entry.extension || typeof entry.extension.getApi !== 'function') return null;
+        return this._invokeSync(entry, 'getApi', entry.extension.getApi);
     }
 
     hydrateAll(sessionId) {
         for (const entry of this.entries) {
             if (entry.extension && typeof entry.extension.hydrate === 'function') {
-                entry.extension.hydrate(sessionId);
+                this._invokeSync(entry, 'hydrate', entry.extension.hydrate, [sessionId]);
             }
         }
     }
@@ -78,17 +80,17 @@ class PluginRegistry {
     persistAll(sessionId) {
         for (const entry of this.entries) {
             if (entry.extension && typeof entry.extension.persist === 'function') {
-                entry.extension.persist(sessionId);
+                this._invokeSync(entry, 'persist', entry.extension.persist, [sessionId]);
             }
         }
     }
 
     // 脏标记：任一扩展声明自己有未保存变更即为脏。
     isDirty() {
-        return this.entries.some((entry) =>
-            entry.extension && typeof entry.extension.isDirty === 'function'
-                ? entry.extension.isDirty()
-                : false);
+        return this.entries.some((entry) => {
+            if (!entry.extension || typeof entry.extension.isDirty !== 'function') return false;
+            return this._invokeSync(entry, 'isDirty', entry.extension.isDirty);
+        });
     }
 
     async onBeforeTurn(context) {
@@ -103,18 +105,34 @@ class PluginRegistry {
         await this._runHook('onToolResult', context, toolCall, result);
     }
 
+    async onSessionResume(context, info) {
+        await this._runHook('onSessionResume', context, info);
+    }
+
+    async dispose(context, info = {}) {
+        for (const entry of this.entries) {
+            if (entry.plugin.onDispose) {
+                await this._invoke(entry, 'onDispose', entry.plugin.onDispose, [context, info]);
+            }
+            if (entry.extension && typeof entry.extension.dispose === 'function') {
+                await this._invoke(entry, 'dispose', entry.extension.dispose, [info]);
+            }
+        }
+    }
+
     // 工具贡献：定义静态可枚举；名称按 owner 命名空间化（D3）；
     // 执行期通过 context.getExtension(owner) 注入 ext，代码内无插件名字面量。
     getTools(context) {
         return this.entries.flatMap((entry) => {
             const tools = entry.plugin.getTools
-                ? entry.plugin.getTools(context)
+                ? this._invokeSync(entry, 'getTools', entry.plugin.getTools, [context])
                 : (entry.plugin.tools || []);
-            return tools.map((tool) => this._wrapTool(tool, entry.plugin.name));
+            return tools.map((tool) => this._wrapTool(tool, entry));
         });
     }
 
-    _wrapTool(tool, owner) {
+    _wrapTool(tool, entry) {
+        const owner = entry.plugin.name;
         const baseName = tool.definition.function.name;
         const namespaced = `${owner}${NAMESPACE_SEPARATOR}${baseName}`;
 
@@ -128,7 +146,7 @@ class PluginRegistry {
                 const ext = context && typeof context.getExtension === 'function'
                     ? context.getExtension(owner)
                     : null;
-                return tool.handler(args, context, ext);
+                return this._invoke(entry, 'tool', tool.handler, [args, context, ext], { tool: baseName });
             },
         };
     }
@@ -137,13 +155,19 @@ class PluginRegistry {
     getContinuationGuards(context) {
         return this.entries.flatMap((entry) => {
             const guards = entry.plugin.getContinuationGuards
-                ? entry.plugin.getContinuationGuards(context)
+                ? this._invokeSync(entry, 'getContinuationGuards', entry.plugin.getContinuationGuards, [context])
                 : (entry.plugin.continuationGuards || []);
             const owner = entry.plugin.name;
 
             return guards.map((guard) => ({
-                shouldContinue: (ctx) => guard.shouldContinue(ctx, this._extFor(ctx, owner)),
-                buildReminder: (ctx) => guard.buildReminder(ctx, this._extFor(ctx, owner)),
+                shouldContinue: (ctx) => this._invoke(
+                    entry, 'guard.shouldContinue', guard.shouldContinue,
+                    [ctx, this._extFor(ctx, owner)]
+                ),
+                buildReminder: (ctx) => this._invoke(
+                    entry, 'guard.buildReminder', guard.buildReminder,
+                    [ctx, this._extFor(ctx, owner)]
+                ),
             }));
         });
     }
@@ -153,11 +177,51 @@ class PluginRegistry {
     }
 
     async _runHook(name, ...args) {
-        for (const { plugin } of this.entries) {
-            if (plugin[name]) {
-                await plugin[name](...args);
+        for (const entry of this.entries) {
+            if (entry.plugin[name]) {
+                await this._invoke(entry, name, entry.plugin[name], args);
             }
         }
+    }
+
+    async _invoke(entry, phase, fn, args = [], details = {}) {
+        try {
+            return await fn(...args);
+        } catch (error) {
+            return this._raise(entry, phase, error, details);
+        }
+    }
+
+    _invokeSync(entry, phase, fn, args = [], details = {}) {
+        try {
+            const result = fn(...args);
+            if (result && typeof result.then === 'function') {
+                throw new TypeError(`Plugin "${entry.plugin.name}" phase "${phase}" must be synchronous`);
+            }
+            return result;
+        } catch (error) {
+            return this._raise(entry, phase, error, details);
+        }
+    }
+
+    _raise(entry, phase, error, details = {}) {
+        const pluginError = error instanceof PluginError
+            ? error
+            : new PluginError(entry.plugin.name, phase, error);
+        try {
+            const result = entry.plugin.onError(pluginError, {
+                plugin: entry.plugin.name,
+                phase,
+                extension: entry.extension,
+                ...details,
+            });
+            if (result && typeof result.then === 'function') {
+                throw new TypeError(`Plugin "${entry.plugin.name}" onError() must throw synchronously`);
+            }
+        } catch (raised) {
+            throw raised;
+        }
+        throw new Error(`Plugin "${entry.plugin.name}" onError() must throw`);
     }
 }
 

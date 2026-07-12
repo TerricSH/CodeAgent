@@ -1,8 +1,8 @@
-function evaluate(context, guards = []) {
+async function evaluate(context, guards = []) {
     for (const guard of guards) {
-        if (!guard.shouldContinue(context)) continue;
+        if (!await guard.shouldContinue(context)) continue;
 
-        const reminder = guard.buildReminder(context);
+        const reminder = await guard.buildReminder(context);
         if (reminder) {
             return { shouldContinue: true, reminder };
         }

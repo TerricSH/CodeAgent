@@ -38,23 +38,40 @@ class Context {
 
     // 传输覆盖：插件经 onBeforeTurn 登记“摘要替最旧前缀”。仅影响传输态，存储态始终全量。
     // overlay = { summary, coverEnd }；summary 可为字符串或消息对象（此处规范化）；传 null 清除。
-    setTransportOverlay(overlay) {
-        if (!overlay || !overlay.summary) {
-            this.state.transportOverlay = null;
+    setTransportOverlay(ownerOrOverlay, value) {
+        const owner = typeof ownerOrOverlay === 'string' ? ownerOrOverlay : 'legacy';
+        const overlay = typeof ownerOrOverlay === 'string' ? value : ownerOrOverlay;
+        if (!this.state.transportOverlays) this.state.transportOverlays = {};
+        if (!overlay) {
+            delete this.state.transportOverlays[owner];
             return;
         }
-        const summary = typeof overlay.summary === 'string'
-            ? { role: 'user', content: overlay.summary }
-            : overlay.summary;
-        this.state.transportOverlay = {
-            summary: ops.normalizeMessage(summary),
+        const sourceMessages = Array.isArray(overlay.messages)
+            ? overlay.messages
+            : (overlay.summary ? [overlay.summary] : []);
+        const normalized = sourceMessages.map((message) => ops.normalizeMessage(
+            typeof message === 'string' ? { role: 'user', content: message } : message
+        ));
+        if (normalized.length === 0) {
+            delete this.state.transportOverlays[owner];
+            return;
+        }
+        this.state.transportOverlays[owner] = {
+            owner,
+            priority: Number.isFinite(overlay.priority) ? overlay.priority : 0,
+            messages: normalized,
             coverEnd: Number.isInteger(overlay.coverEnd) && overlay.coverEnd > 0 ? overlay.coverEnd : 0,
+            version: overlay.version || null,
         };
     }
 
     // 只读：当前传输覆盖（供插件判断是否需要重算摘要）。
-    getTransportOverlay() {
-        return this.state.transportOverlay;
+    getTransportOverlay(owner = 'legacy') {
+        return this.state.transportOverlays ? this.state.transportOverlays[owner] || null : null;
+    }
+
+    getTransportOverlays() {
+        return Object.values(this.state.transportOverlays || {});
     }
 
     // 只读副本：冻结每条消息与数组，外部不能改动内部状态（边界 1 = B）。

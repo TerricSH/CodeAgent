@@ -43,6 +43,14 @@ class SessionRuntime {
         });
         // 插件按新 sessionId hydrate；systemPrompt 动态分段随新会话重建。
         await plugins.init(context);
+        if (loaded) {
+            await plugins.onSessionResume(context, {
+                sessionId: loaded.id,
+                previousClosedAt: loaded.endTime || null,
+                messageCount: loaded.messages.length,
+                lastMessage: loaded.messages[loaded.messages.length - 1] || null,
+            });
+        }
 
         this.session = sessionInstance;
         this.context = context;
@@ -54,7 +62,11 @@ class SessionRuntime {
     _fingerprint() {
         const msgs = this.context.snapshotMessages();
         const last = msgs[msgs.length - 1];
-        return `${msgs.length}:${last ? (last.finished_at || last.created_at || '') : ''}`;
+        return JSON.stringify({
+            messageCount: msgs.length,
+            lastChangedAt: last ? (last.finished_at || last.created_at || '') : '',
+            metadata: this.context.metadata,
+        });
     }
 
     persist({ force = false, closing = false } = {}) {
@@ -86,11 +98,13 @@ class SessionRuntime {
             this.persist({ force: true });
 
             if (pending.type === 'new') {
+                await this.plugins.dispose(this.context, { reason: 'session-switch' });
                 await this._build(new Session(), null);
                 return { type: 'new', id: this.session.id };
             }
             const loaded = Session.load(pending.id);
             if (!loaded) return { type: 'error', id: pending.id, reason: 'not_found' };
+            await this.plugins.dispose(this.context, { reason: 'session-switch' });
             const sess = new Session({ id: loaded.id, startTime: loaded.startTime, metadata: loaded.metadata });
             await this._build(sess, loaded);
             return { type: 'switch', id: this.session.id, messageCount: loaded.messages.length };
@@ -151,6 +165,12 @@ class SessionRuntime {
                 requestSwitch: (id) => runtime.requestSwitch(id),
             },
         };
+    }
+
+    async dispose(reason = 'close') {
+        if (this.plugins && this.context) {
+            await this.plugins.dispose(this.context, { reason });
+        }
     }
 }
 

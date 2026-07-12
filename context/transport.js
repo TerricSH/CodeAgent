@@ -1,7 +1,7 @@
 // context/transport.js 是 context 私有内核的“传输态组装权威”。
 // 决定最终发给模型的历史消息：先应用插件登记的传输覆盖（摘要替最旧前缀），再过内置按词元裁撤兜底。
 // 存储态始终保留全量；本模块只产出传输态，不改 state.messages。
-const { estimateTokens, totalTokensOf } = require('./tokens');
+const { estimateTokens } = require('./tokens');
 
 // 递归裁撤：从最旧一条开始丢弃，直到总词元落入 budget。
 // 关键安全点：丢弃后不能让开头是悬空的 tool 结果（其 assistant tool_calls
@@ -65,7 +65,8 @@ function applyOverlay(messages, overlay) {
     if (!isValidOverlay(overlay)) return messages;
     const boundary = findSafeBoundary(messages, overlay.coverEnd || 0);
     if (boundary <= 0) return messages;
-    const out = [overlay.summary, ...messages.slice(boundary)];
+    const injected = overlay.messages || (overlay.summary ? [overlay.summary] : []);
+    const out = [...injected, ...messages.slice(boundary)];
     if (hasDanglingTool(out)) {
         console.warn('[context] 传输覆盖产生悬空 tool 结果，已忽略本次覆盖。');
         return messages;
@@ -73,13 +74,60 @@ function applyOverlay(messages, overlay) {
     return out;
 }
 
+function applyOverlays(messages, overlays = []) {
+    const valid = overlays
+        .filter((overlay) => overlay && Array.isArray(overlay.messages) && overlay.messages.length > 0)
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    if (valid.length === 0) return messages;
+
+    const requestedBoundary = valid.reduce(
+        (max, overlay) => Math.max(max, overlay.coverEnd || 0),
+        0
+    );
+    const boundary = findSafeBoundary(messages, requestedBoundary);
+    const injected = valid.flatMap((overlay) => overlay.messages);
+    const out = [...injected, ...messages.slice(boundary)];
+    if (hasDanglingTool(out)) return messages;
+    return out;
+}
+
 // 传输态组装：先应用插件登记的覆盖（同步、纯数据），再过内置裁撤兜底。
 // 覆盖只影响传输态；存储态（state.messages）始终全量。
 function buildTransport(state, systemMessage) {
-    const overlaid = applyOverlay(state.messages, state.transportOverlay);
-    // 未被覆盖改动时复用运行总数，避免全量求和。
-    const knownTotal = overlaid === state.messages ? totalTokensOf(state) : undefined;
-    return manageContext(overlaid, systemMessage, state.maxContextTokens, knownTotal);
+    const overlays = state.transportOverlays
+        ? Object.values(state.transportOverlays)
+        : (state.transportOverlay ? [{
+            messages: [state.transportOverlay.summary],
+            coverEnd: state.transportOverlay.coverEnd || 0,
+            priority: 0,
+        }] : []);
+    if (!Number.isInteger(state.maxContextTokens) || state.maxContextTokens <= 0) {
+        return applyOverlays(state.messages, overlays);
+    }
+
+    const totalBudget = Math.max(0, state.maxContextTokens - estimateTokens(systemMessage));
+    const sorted = overlays
+        .filter((overlay) => overlay && Array.isArray(overlay.messages) && overlay.messages.length > 0)
+        .sort((a, b) => (b.priority || 0) - (a.priority || 0));
+    const selected = [];
+    let overlayTokens = 0;
+    for (const overlay of sorted) {
+        const cost = overlay.messages.reduce((sum, message) => sum + estimateTokens(message), 0);
+        if (overlayTokens + cost > totalBudget) continue;
+        selected.push(overlay);
+        overlayTokens += cost;
+    }
+
+    const requestedBoundary = selected.reduce(
+        (max, overlay) => Math.max(max, overlay.coverEnd || 0),
+        0
+    );
+    const boundary = findSafeBoundary(state.messages, requestedBoundary);
+    const history = state.messages.slice(boundary);
+    const trimmedHistory = trimToBudget(history, Math.max(0, totalBudget - overlayTokens));
+    const injected = selected.flatMap((overlay) => overlay.messages);
+    const result = [...injected, ...trimmedHistory];
+    return hasDanglingTool(result) ? trimmedHistory : result;
 }
 
 function getMessages(state, systemMessage) {
@@ -93,6 +141,7 @@ module.exports = {
     findSafeBoundary,
     hasDanglingTool,
     applyOverlay,
+    applyOverlays,
     buildTransport,
     getMessages,
 };

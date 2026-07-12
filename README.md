@@ -1,5 +1,26 @@
 # CodeAgent
 
+## OpenAI Codex Provider
+
+Codex models use the OpenAI Responses API. Configure an OpenAI API key in `.env`:
+
+```env
+OPENAI_API_KEY=your-openai-api-key
+OPENAI_CODEX_MODEL=gpt-5.3-codex
+```
+
+Set `default` in `model-providers/config.json` to use it as the main model:
+
+```json
+{
+  "default": "openai@responses/gpt-5.3-codex"
+}
+```
+
+The full generated configuration also contains the vendor definitions; only change
+the `default` field in that file. This provider uses an OpenAI Platform API key and
+does not reuse Codex CLI or ChatGPT login credentials.
+
 一个基础的命令行 AI Agent 实验项目，支持模型对话、工具调用、子 agent、技能提示词、会话保存和可插拔输出层。
 
 ## Start
