@@ -3,7 +3,9 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
-        "start": "node mainloop.js"
+        "start": "node mainloop.js",
+        "test": "node --test",
+        "sandbox:build": "docker build -t codeagent-sandbox:local plugins/docker-sandbox/image"
     },
     "dependencies": {
         "better-sqlite3": "^11.7.0",
