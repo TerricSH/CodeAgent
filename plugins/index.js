@@ -5,10 +5,23 @@ const taskLedgerPlugin = require('./task-ledger');
 const askUserPlugin = require('./ask-user');
 const autoCompactionPlugin = require('./auto-compaction');
 const memoryPlugin = require('./memory');
+const dockerSandboxPlugin = require('./docker-sandbox');
+const trajectoryRecorderPlugin = require('./trajectory-recorder');
+const rewardEvaluatorPlugin = require('./reward-evaluator');
+const trainingManagerPlugin = require('./training-manager');
 const PluginError = require('./plugin-error');
 const { definePlugin, validatePlugin } = require('./define-plugin');
 
-const defaultPlugins = [taskLedgerPlugin, askUserPlugin, memoryPlugin, autoCompactionPlugin];
+const defaultPlugins = [
+    taskLedgerPlugin,
+    askUserPlugin,
+    memoryPlugin,
+    autoCompactionPlugin,
+    dockerSandboxPlugin,
+    trajectoryRecorderPlugin,
+    rewardEvaluatorPlugin,
+    trainingManagerPlugin,
+];
 
 function getPluginConfig(name, options = {}) {
     const pluginOptions = options.plugins || {};
@@ -40,6 +53,10 @@ module.exports = {
     askUserPlugin,
     autoCompactionPlugin,
     memoryPlugin,
+    dockerSandboxPlugin,
+    trajectoryRecorderPlugin,
+    rewardEvaluatorPlugin,
+    trainingManagerPlugin,
     PluginError,
     definePlugin,
     validatePlugin,

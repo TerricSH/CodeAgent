@@ -192,12 +192,61 @@ module.exports = {
 
 - `task-ledger`: 为当前会话初始化任务清单状态，并贡献 `task_ledger` 工具和确定性的 continuation guard。
 - `ask-user`: 需要补充信息时贡献 `ask_user` 工具，向用户批量提问（选项或自由作答），并把已收集信息注入系统提示作为基础信息。
+- `memory`: 检索当前会话及持久化记忆。
+- `auto-compaction`: 在上下文接近预算时生成传输层摘要。
+- `docker-sandbox`: 在会话隔离的 Docker 工作区中执行非交互命令。
+- `trajectory-recorder`: 记录任务、工具调用、结果和奖励，并导出 JSONL。
+- `reward-evaluator`: 把显式标记为评测的沙盒命令转换成奖励信号。
+- `training-manager`: 自动发现本地模型包，并按需启动包内 Python Worker 训练。
 
 插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态、metadata 和插件状态，不再直接实例化任务清单。
 
 宿主可在创建注册表时通过 `createDefaultRegistry({ services })` 注入通用能力（如 `services.output` 交互层），这些能力会传给每个插件的 `init(context, { store, config, services })`。宿主只提供通用能力、不感知具体插件；插件自带的终端文案随插件存放在插件目录内，不写入核心 `renderers/<mode>/labels.json`。
 
 新增插件规范与接口清单见 [plugins/README.md](plugins/README.md)。
+
+### Docker Sandbox
+
+先构建本地沙盒镜像：
+
+```bash
+npm run sandbox:build
+```
+
+沙盒按命令启动临时容器，工作目录位于 `.code/sandboxes/<session>/workspace`。默认策略包括：
+
+- 禁用网络；
+- 根文件系统只读；
+- 删除全部 Linux capabilities，并禁止获取新权限；
+- 非 root 用户；
+- CPU、内存、进程数、执行时间和输出大小限制；
+- 不挂载项目根目录、`.env`、`.git` 或 Docker Socket。
+
+插件提供：
+
+- `docker-sandbox__sandbox_status`
+- `docker-sandbox__sandbox_exec`
+- `docker-sandbox__sandbox_reset`
+
+普通命令使用 `purpose: "work"`。只有真正决定任务成败的测试命令才使用
+`purpose: "evaluation"`，后者会被 `reward-evaluator` 转换成奖励。
+
+### Reinforcement-learning data
+
+一次完整回复形成一条 trajectory。执行
+`trajectory-recorder__trajectory_export` 后，数据写入：
+
+```text
+.code/rl/trajectories/<session-id>.jsonl
+```
+
+CodeAgent 负责 rollout、工具环境、验证和轨迹采集；模型梯度、优化器和 checkpoint
+由独立训练进程管理。数据格式和训练边界见 [training/README.md](training/README.md)。
+
+模型、tokenizer、对话模板和 Python 训练入口可以一起放入
+`training/models/<model-id>/`。框架只读取 `manifest.json` 完成发现和能力校验；调用
+`training-manager__training_start` 时才启动 Python 文件。模型包格式与 JSONL 协议见
+[training/models/README.md](training/models/README.md)。
 
 ## Search Config
 
@@ -240,6 +289,7 @@ client.js                # 默认模型 client（解析自 model-providers）
 model-providers/         # 模型接入：厂商/兼容接口/模型（含 interfaces/ 接口与 vendors/ 私货覆写）
 context/                 # 对话上下文
 plugins/                 # 运行时插件
+training/                # 模型/算法训练契约、能力协商和 Worker 适配
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
 data-layer/              # SQLite 与 repository
