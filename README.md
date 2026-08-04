@@ -231,6 +231,19 @@ npm run sandbox:build
 普通命令使用 `purpose: "work"`。只有真正决定任务成败的测试命令才使用
 `purpose: "evaluation"`，后者会被 `reward-evaluator` 转换成奖励。
 
+显式的开发训练不使用日常会话自动沉淀。训练任务由
+[`training/suites/`](training/suites/README.md) 下的宿主清单定义；一次训练会从同一基准快照创建
+多个独立 Rollout，使用清单中不可覆盖的评测命令和保护路径评分，选择最佳候选，并导出
+`skillopt-rollouts.jsonl`。训练产物只留在 `.code/sandboxes/<session>/training-runs/`，不会直接
+写回宿主项目。
+
+训练工具：
+
+- `docker-sandbox__sandbox_training_suites`
+- `docker-sandbox__sandbox_training_start`
+- `docker-sandbox__sandbox_training_history`
+- `docker-sandbox__sandbox_training_result`
+
 ### Reinforcement-learning data
 
 一次完整回复形成一条 trajectory。执行

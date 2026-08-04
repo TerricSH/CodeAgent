@@ -155,7 +155,11 @@ class SessionRuntime {
             output: this.output,
             // 模型能力转发：插件（如摘要）经此做一次性补全；宿主未注入则为 null（插件应降级）。
             model: this._model
-                ? { complete: (messages, options) => runtime._model.complete(messages, options) }
+                ? {
+                    complete: (messages, options) => runtime._model.complete(messages, options),
+                    chat: (messages, options) => runtime._model.chat(messages, options),
+                    info: () => runtime._model.info(),
+                }
                 : null,
             session: {
                 current: () => runtime.current(),

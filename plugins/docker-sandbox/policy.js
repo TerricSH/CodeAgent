@@ -12,6 +12,7 @@ const DEFAULTS = Object.freeze({
     pidsLimit: 128,
     tmpfsSize: '64m',
     network: 'none',
+    maxTrainingRuns: 20,
 });
 
 function positiveInteger(value, fallback) {
@@ -36,6 +37,10 @@ function defaultContainerUser() {
 
 function normalizeConfig(config = {}) {
     const root = path.resolve(config.sandboxRoot || path.join(process.cwd(), '.code', 'sandboxes'));
+    const projectRoot = path.resolve(config.projectRoot || process.cwd());
+    const suitesRoot = path.resolve(
+        config.suitesRoot || path.join(projectRoot, 'training', 'suites')
+    );
     if (root.includes(',')) {
         throw new Error('Docker sandbox root cannot contain commas');
     }
@@ -44,6 +49,8 @@ function normalizeConfig(config = {}) {
         command: String(config.command || DEFAULTS.command),
         image: String(config.image || DEFAULTS.image),
         sandboxRoot: root,
+        projectRoot,
+        suitesRoot,
         timeoutMs: positiveInteger(config.timeoutMs, DEFAULTS.timeoutMs),
         maxTimeoutMs: positiveInteger(config.maxTimeoutMs, DEFAULTS.maxTimeoutMs),
         maxOutputBytes: positiveInteger(config.maxOutputBytes, DEFAULTS.maxOutputBytes),
@@ -53,6 +60,7 @@ function normalizeConfig(config = {}) {
         tmpfsSize: String(config.tmpfsSize || DEFAULTS.tmpfsSize),
         network: config.network === 'bridge' ? 'bridge' : DEFAULTS.network,
         user: String(config.user || defaultContainerUser()),
+        maxTrainingRuns: positiveInteger(config.maxTrainingRuns, DEFAULTS.maxTrainingRuns),
     });
 }
 
