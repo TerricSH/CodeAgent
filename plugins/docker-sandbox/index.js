@@ -13,8 +13,12 @@ module.exports = definePlugin({
         throw error;
     },
 
-    init(context, { store, config = {} } = {}) {
-        const sandbox = new DockerSandboxService(context.sessionId, config);
+    init(context, { store, config = {}, services = {} } = {}) {
+        const sandbox = new DockerSandboxService(
+            context.sessionId,
+            config,
+            { model: services.model || null }
+        );
         return {
             getApi: () => sandbox,
             isDirty: () => sandbox.dirty,

@@ -35,6 +35,10 @@ test('RL plugins retain registry namespacing and attach evaluation rewards to tr
 
     const names = registry.getTools(context).map((tool) => tool.definition.function.name);
     assert.ok(names.includes('docker-sandbox__sandbox_exec'));
+    assert.ok(names.includes('docker-sandbox__sandbox_training_suites'));
+    assert.ok(names.includes('docker-sandbox__sandbox_training_start'));
+    assert.ok(names.includes('docker-sandbox__sandbox_training_history'));
+    assert.ok(names.includes('docker-sandbox__sandbox_training_result'));
     assert.ok(names.includes('trajectory-recorder__trajectory_export'));
     assert.ok(names.includes('reward-evaluator__reward_summary'));
 

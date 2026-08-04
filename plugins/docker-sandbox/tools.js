@@ -74,4 +74,77 @@ const reset = {
     handler: safe((args, sandbox) => sandbox.reset()),
 };
 
-module.exports = [status, exec, reset];
+const trainingSuites = {
+    definition: {
+        type: 'function',
+        function: {
+            name: 'sandbox_training_suites',
+            description: 'List host-defined development-training suites and their fixed evaluation policy.',
+            parameters: { type: 'object', properties: {}, required: [] },
+        },
+    },
+    handler: safe((args, sandbox) => sandbox.listTrainingSuites()),
+};
+
+const trainingStart = {
+    definition: {
+        type: 'function',
+        function: {
+            name: 'sandbox_training_start',
+            description: 'Run multiple isolated agent rollouts for a host-defined suite, evaluate them, and select the best result.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    suiteId: {
+                        type: 'string',
+                        description: 'Identifier from sandbox_training_suites. Task and evaluator cannot be overridden.',
+                    },
+                },
+                required: ['suiteId'],
+            },
+        },
+    },
+    handler: safe((args, sandbox) => sandbox.startTraining(args)),
+};
+
+const trainingHistory = {
+    definition: {
+        type: 'function',
+        function: {
+            name: 'sandbox_training_history',
+            description: 'List recent multi-rollout development-training runs.',
+            parameters: {
+                type: 'object',
+                properties: { limit: { type: 'number' } },
+                required: [],
+            },
+        },
+    },
+    handler: safe((args, sandbox) => ({ runs: sandbox.trainingHistory(args.limit) })),
+};
+
+const trainingResult = {
+    definition: {
+        type: 'function',
+        function: {
+            name: 'sandbox_training_result',
+            description: 'Read the ranking, best rollout, and SkillOpt input artifact for a completed training run.',
+            parameters: {
+                type: 'object',
+                properties: { runId: { type: 'string' } },
+                required: ['runId'],
+            },
+        },
+    },
+    handler: safe((args, sandbox) => sandbox.trainingResult(args.runId)),
+};
+
+module.exports = [
+    status,
+    exec,
+    reset,
+    trainingSuites,
+    trainingStart,
+    trainingHistory,
+    trainingResult,
+];
