@@ -45,6 +45,45 @@ node mainloop.js
 
 终端中输入消息开始对话，输入 `exit` 退出。
 
+## Workspace
+
+Configure one existing directory as the root for project content operations:
+
+```env
+WORKSPACE_ROOT=E:/projects/my-project
+```
+
+When omitted, the process startup directory is used. `read_file`, `read_files`, `write_file`,
+`write_files`, and `list_dir` resolve relative paths inside this root. Lexical, absolute-path,
+symbolic-link, and junction
+escapes return `WORKSPACE_APPROVAL_REQUIRED` instead of executing. The Agent must then call
+`workspace__workspace_request_access`; this Tool asks the user directly and can grant exactly one
+matching read, write, or list operation. Chat text and Agent-generated parameters cannot approve
+access. `run_command` starts with the Workspace root as its working directory. Memory project
+scope and Docker Sandbox paths use the same stable Workspace ID. Use
+`workspace__workspace_status` to inspect the active root.
+
+Use the CLI command below to inspect or switch the active Workspace without restarting:
+
+```text
+/workspace
+/workspace E:/projects/another-project
+/workspace "E:/projects/a folder with spaces"
+```
+
+Relative switch paths are resolved from the current Workspace. Switching is performed only between
+turns: the current session is persisted, session-scoped services are disposed, an immutable Workspace
+snapshot is activated, and plugins/tools are rebuilt. The conversation is preserved. If rebuilding
+fails, the runtime restores the previous Workspace and rebuilds its services.
+
+Workspace is a runtime-owned service, not the source of truth inside a plugin. Core file tools receive
+only a file-resolution capability, `run_command` receives only a command working-directory scope,
+and Memory and Docker Sandbox receive independent project-specific scope values. The Workspace
+plugin is only the tool-facing status and approval adapter.
+
+Host shell commands are not an OS sandbox and can still address paths allowed by the host account;
+use `docker-sandbox__sandbox_exec` when command-level filesystem isolation is required.
+
 ## Model Config
 
 模型配置放在 `.env`：
@@ -175,12 +214,15 @@ module.exports = {
 
 - `run_command`: 执行本地命令
 - `read_file`: 读取文件
+- `read_files`: 批量读取多个文件并逐个返回结果
 - `write_file`: 写入文件
+- `write_files`: 批量写入多个文件并逐个返回结果
 - `list_dir`: 列出目录
 - `web_search`: 互联网搜索
 - `github_search`: GitHub 搜索
 - `activate_skill`: 激活 skill
 - `delegate_agent`: 委托子 agent
+- `rag`: 将当前项目源码索引到 PostgreSQL，或检索已索引的项目知识
 
 新增工具规范见 [tools/README.md](tools/README.md)。
 
@@ -204,6 +246,26 @@ module.exports = {
 宿主可在创建注册表时通过 `createDefaultRegistry({ services })` 注入通用能力（如 `services.output` 交互层），这些能力会传给每个插件的 `init(context, { store, config, services })`。宿主只提供通用能力、不感知具体插件；插件自带的终端文案随插件存放在插件目录内，不写入核心 `renderers/<mode>/labels.json`。
 
 新增插件规范与接口清单见 [plugins/README.md](plugins/README.md)。
+
+### RAG Tool
+
+RAG 是一个核心 Tool，不是运行时插件。`rag` 的 `index_project` 操作扫描当前 Workspace 的
+项目文件，将切块和 Embedding 写入 PostgreSQL + pgvector；`search` 从当前 Workspace 的稳定
+collection 中召回并 rerank。检索流程为：
+
+```text
+文档切块 → Embedding → pgvector/HNSW 候选召回 → rerank → 带来源的结果
+```
+
+代码职责按层拆分：数据库 Repository 位于 `data-layer/`，Embedding、rerank 与模型 Worker
+位于 `model/`，文件发现和切块位于 `workspace/`，只有 Tool 编排与参数接口位于 `tools/rag/`。
+Embedding 与 rerank 由受管的本机 Python 子进程执行，强制离线模式，不调用外部模型服务。
+
+`rag` 支持 `status`、`index_project`、`search`、`list_documents` 和 `delete_document` 操作。
+只有主 agent 可以建立索引或删除文档；子 agent 可以查询和列出文档。
+
+完整配置和边界说明见 [tools/rag/README.md](tools/rag/README.md)。检索内容始终作为不可信工具数据返回，
+不会自动注入 system 消息。
 
 ### Docker Sandbox
 
@@ -300,17 +362,19 @@ mainloop.js              # CLI 主循环
 agent-runner.js          # Agent 对话与工具调用循环
 client.js                # 默认模型 client（解析自 model-providers）
 model-providers/         # 模型接入：厂商/兼容接口/模型（含 interfaces/ 接口与 vendors/ 私货覆写）
+model/                   # RAG 本地 Embedding、rerank、Worker 与模型文件
 context/                 # 对话上下文
 plugins/                 # 运行时插件
 training/                # 模型/算法训练契约、能力协商和 Worker 适配
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
-data-layer/              # SQLite 与 repository
+data-layer/              # SQLite/PostgreSQL 数据访问与 repository
+workspace/               # Workspace 路径、权限和切换
 renderers/               # 输出层插件入口与 CLI/TUI 实现
 event-dispatcher/        # 模型事件分发
 skills/                  # skill 配置
 agents/                  # subagent 配置
-tools/                   # 工具插件
+tools/                   # 核心工具（包括单一 rag Tool）
 search-providers/        # Web 搜索 provider
 github/                  # GitHub API 配置与客户端
 ```

@@ -1,13 +1,28 @@
 const runCommand = require('./run-command');
 const readFile = require('./read-file');
+const readFiles = require('./read-files');
 const writeFile = require('./write-file');
+const writeFiles = require('./write-files');
 const listDir = require('./list-dir');
 const activateSkill = require('./activate-skill');
 const webSearch = require('./web-search');
 const delegateAgent = require('./delegate-agent');
 const githubSearch = require('./github-search');
+const rag = require('./rag');
 
-const coreTools = [runCommand, readFile, writeFile, listDir, activateSkill, webSearch, delegateAgent, githubSearch];
+const coreTools = [
+    runCommand,
+    readFile,
+    readFiles,
+    writeFile,
+    writeFiles,
+    listDir,
+    activateSkill,
+    webSearch,
+    delegateAgent,
+    githubSearch,
+    rag,
+];
 
 function createRegistry(extraTools = []) {
     const registeredTools = [...coreTools, ...extraTools];

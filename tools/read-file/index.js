@@ -1,5 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const {
+    requireRuntimeService,
+    formatServiceError,
+} = require('../runtime-service');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
@@ -18,11 +22,14 @@ const definition = {
     },
 };
 
-function handler({ path: filePath }) {
+function handler({ path: filePath }, context) {
+    let fileSystem = null;
     try {
-        return fs.readFileSync(path.resolve(filePath), 'utf-8');
+        fileSystem = requireRuntimeService(context, 'fileSystem');
+        const resolved = fileSystem.resolveExisting(filePath, { type: 'file' });
+        return fs.readFileSync(resolved, 'utf-8');
     } catch (err) {
-        return `读取失败: ${err.message}`;
+        return formatServiceError(fileSystem, err, '读取失败');
     }
 }
 

@@ -4,3 +4,5 @@ search-providers/config.json
 github/config.json
 model-providers/config.json
 .code/
+model/models/bge-m3/
+model/models/bge-reranker-base/

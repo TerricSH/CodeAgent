@@ -5,6 +5,25 @@ const Session = require('../../session');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
+const INHERITED_RUNTIME_SERVICES = Object.freeze([
+    'workspace',
+    'fileSystem',
+    'commandScope',
+    'memoryScope',
+    'sandboxScope',
+]);
+
+function inheritRuntimeServices(context, ownServices = {}) {
+    const services = { ...ownServices };
+    for (const name of INHERITED_RUNTIME_SERVICES) {
+        const service = context && typeof context.getService === 'function'
+            ? context.getService(name)
+            : null;
+        if (service) services[name] = service;
+    }
+    return services;
+}
+
 const definition = {
     type: 'function',
     function: {
@@ -72,8 +91,12 @@ async function handler({ agent: agentName, task }, context) {
             return text;
         },
     };
-    // 通用能力注入：与主循环一致，宿主只提供 output 交互层与 model 转发，不感知任何具体插件。
-    const subPlugins = createDefaultRegistry({ scope: 'agent', services: { output: subOutput, model: subModelService } });
+    // 子 agent 继承主运行时已经收窄的 Workspace 能力；output/model 保持子会话独立。
+    const subServices = inheritRuntimeServices(context, {
+        output: subOutput,
+        model: subModelService,
+    });
+    const subPlugins = createDefaultRegistry({ services: subServices });
     const subToolRegistry = tools.createRegistry(subPlugins.getTools());
     const subContext = new Context(agentConfig.prompt, {
         sessionId: subSession.id,
@@ -81,6 +104,7 @@ async function handler({ agent: agentName, task }, context) {
         // 上下文窗口取自子 agent 实际所用的 client，与主 agent 完全隔离。
         maxContextTokens: subClient.maxContextTokens,
         resolveExtension: (name) => subPlugins.resolveApi(name),
+        resolveService: (name) => subServices[name] || null,
     });
     await subPlugins.init(subContext);
     subContext.addUser(task);
@@ -117,4 +141,10 @@ async function handler({ agent: agentName, task }, context) {
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = {
+    definition,
+    handler,
+    prompt,
+    INHERITED_RUNTIME_SERVICES,
+    inheritRuntimeServices,
+};

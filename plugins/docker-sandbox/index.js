@@ -14,9 +14,15 @@ module.exports = definePlugin({
     },
 
     init(context, { store, config = {}, services = {} } = {}) {
+        const scope = services.sandboxScope;
+        const effectiveConfig = scope ? {
+            ...config,
+            projectRoot: config.projectRoot || scope.projectRoot,
+            sandboxRoot: config.sandboxRoot || scope.sandboxRoot,
+        } : config;
         const sandbox = new DockerSandboxService(
             context.sessionId,
-            config,
+            effectiveConfig,
             { model: services.model || null }
         );
         return {

@@ -15,5 +15,9 @@
   "session.switched": "已切换 session: {id}（消息数 {count}）",
   "session.notFound": "未找到 session: {id}",
   "session.opFailed": "会话操作失败: {id}（{detail}）",
+  "workspace.current": "当前 Workspace: {root}",
+  "workspace.switched": "已切换 Workspace: {root}",
+  "workspace.unchanged": "Workspace 未变化: {root}",
+  "workspace.opFailed": "Workspace 切换失败: {detail}",
   "status.context": "── 上下文 {used}/{limit} · 已用 {percent}% · {messages} 条"
 }

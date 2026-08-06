@@ -1,8 +1,9 @@
 // 命令注册表（宿主通用机制）：mainloop 只认这个泛化入口，不感知具体有哪些命令。
 // 新增命令模块只需实现 { match(text), run(text, ctx) -> { handled, message? } } 并在此注册一行。
 const sessionCommands = require('./session');
+const workspaceCommands = require('./workspace');
 
-const registry = [sessionCommands];
+const registry = [sessionCommands, workspaceCommands];
 
 // 返回 { handled, message? }；未命中任何命令则 handled=false，交回普通对话流程。
 async function dispatch(text, ctx) {
