@@ -1,5 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const {
+    requireRuntimeService,
+    formatServiceError,
+} = require('../runtime-service');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
@@ -19,14 +23,16 @@ const definition = {
     },
 };
 
-function handler({ path: filePath, content }) {
+function handler({ path: filePath, content }, context) {
+    let fileSystem = null;
     try {
-        const resolved = path.resolve(filePath);
+        fileSystem = requireRuntimeService(context, 'fileSystem');
+        const resolved = fileSystem.resolveForWrite(filePath);
         fs.mkdirSync(path.dirname(resolved), { recursive: true });
         fs.writeFileSync(resolved, content, 'utf-8');
-        return `已写入 ${resolved}`;
+        return `已写入: ${fileSystem.relative(resolved)}`;
     } catch (err) {
-        return `写入失败: ${err.message}`;
+        return formatServiceError(fileSystem, err, '写入失败');
     }
 }
 

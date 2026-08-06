@@ -44,7 +44,8 @@ class PluginRegistry {
 
     // 初始化每个扩展：注入作用域 store + config，得到扩展实例；随后 hydrate。
     // 单个扩展 hydrate 失败按降级处理，不影响其它扩展与主流程。
-    async init(context) {
+    async init(context, options = {}) {
+        const hydrate = options.hydrate !== false;
         for (const entry of this.entries) {
             const store = this.storeFactory ? this.storeFactory(entry.plugin.name) : null;
             const extension = await this._invoke(
@@ -55,7 +56,7 @@ class PluginRegistry {
             );
             entry.extension = extension || null;
 
-            if (entry.extension && typeof entry.extension.hydrate === 'function') {
+            if (hydrate && entry.extension && typeof entry.extension.hydrate === 'function') {
                 await this._invoke(entry, 'hydrate', entry.extension.hydrate, [context.sessionId]);
             }
         }

@@ -13,6 +13,9 @@ class Context {
         this._resolveExtension = typeof options.resolveExtension === 'function'
             ? options.resolveExtension
             : null;
+        this._resolveService = typeof options.resolveService === 'function'
+            ? options.resolveService
+            : null;
     }
 
     get sessionId() {
@@ -82,6 +85,10 @@ class Context {
     // 扩展访问入口：转调注入的解析器，context 不持有任何插件状态本体（边界 4 + A1）。
     getExtension(name) {
         return this._resolveExtension ? this._resolveExtension(name) : null;
+    }
+
+    getService(name) {
+        return this._resolveService ? this._resolveService(name) : null;
     }
 
     addUser(content) {

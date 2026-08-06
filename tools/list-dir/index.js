@@ -1,5 +1,9 @@
 const fs = require('fs');
 const path = require('path');
+const {
+    requireRuntimeService,
+    formatServiceError,
+} = require('../runtime-service');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
@@ -18,13 +22,15 @@ const definition = {
     },
 };
 
-function handler({ path: dirPath }) {
+function handler({ path: dirPath }, context) {
+    let fileSystem = null;
     try {
-        const resolved = path.resolve(dirPath || '.');
+        fileSystem = requireRuntimeService(context, 'fileSystem');
+        const resolved = fileSystem.resolveExisting(dirPath || '.', { type: 'directory' });
         const entries = fs.readdirSync(resolved, { withFileTypes: true });
         return entries.map(e => e.isDirectory() ? e.name + '/' : e.name).join('\n');
     } catch (err) {
-        return `列出失败: ${err.message}`;
+        return formatServiceError(fileSystem, err, '列出失败');
     }
 }
 

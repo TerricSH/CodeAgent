@@ -3,6 +3,7 @@ const { baseToolName } = PluginRegistry;
 const { createScopedStore } = require('../data-layer/repositories/extension-state-repository');
 const taskLedgerPlugin = require('./task-ledger');
 const askUserPlugin = require('./ask-user');
+const workspacePlugin = require('./workspace');
 const autoCompactionPlugin = require('./auto-compaction');
 const memoryPlugin = require('./memory');
 const dockerSandboxPlugin = require('./docker-sandbox');
@@ -15,6 +16,7 @@ const { definePlugin, validatePlugin } = require('./define-plugin');
 const defaultPlugins = [
     taskLedgerPlugin,
     askUserPlugin,
+    workspacePlugin,
     memoryPlugin,
     autoCompactionPlugin,
     dockerSandboxPlugin,
@@ -51,6 +53,7 @@ module.exports = {
     createDefaultRegistry,
     taskLedgerPlugin,
     askUserPlugin,
+    workspacePlugin,
     autoCompactionPlugin,
     memoryPlugin,
     dockerSandboxPlugin,

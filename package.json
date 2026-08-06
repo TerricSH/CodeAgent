@@ -5,11 +5,13 @@
     "scripts": {
         "start": "node mainloop.js",
         "test": "node --test",
+        "test:rag-local-models": "node model/smoke-local-models.js",
         "sandbox:build": "docker build -t codeagent-sandbox:local plugins/docker-sandbox/image"
     },
     "dependencies": {
-        "better-sqlite3": "^11.7.0",
+        "better-sqlite3": "^12.10.0",
         "dotenv": "^16.4.5",
-        "openai": "^4.73.0"
+        "openai": "^4.73.0",
+        "pg": "^8.13.1"
     }
 }

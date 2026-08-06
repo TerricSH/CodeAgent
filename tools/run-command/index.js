@@ -1,6 +1,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { requireRuntimeService } = require('../runtime-service');
 
 const DEFAULT_TIMEOUT = 30000;
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
@@ -21,9 +22,15 @@ const definition = {
     },
 };
 
-function handler({ command, timeout }) {
+function handler({ command, timeout }, context) {
     try {
-        return execSync(command, { encoding: 'utf-8', timeout: timeout || DEFAULT_TIMEOUT });
+        const commandScope = requireRuntimeService(context, 'commandScope');
+        return execSync(command, {
+            cwd: commandScope.cwd,
+            encoding: 'utf-8',
+            timeout: timeout || DEFAULT_TIMEOUT,
+            env: { ...process.env, ...(commandScope.environment || {}) },
+        });
     } catch (err) {
         return `命令执行失败: ${err.message}`;
     }

@@ -14,8 +14,11 @@ module.exports = definePlugin({
         throw error;
     },
 
-    init(context, { store, config = {} } = {}) {
-        const memory = new MemoryService(context, new MemoryRepository(), config);
+    init(context, { store, config = {}, services = {} } = {}) {
+        const memory = new MemoryService(context, new MemoryRepository(), {
+            ...config,
+            projectKey: config.projectKey || services.memoryScope?.projectKey,
+        });
         return {
             getApi: () => memory,
             isDirty: () => memory.dirty,

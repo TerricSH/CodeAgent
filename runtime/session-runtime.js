@@ -3,15 +3,28 @@ const Session = require('../session');
 const tools = require('../tools');
 const { createDefaultRegistry } = require('../plugins');
 const { buildSystemPrompt } = require('../system-prompt');
+const { WorkspaceManager } = require('../workspace');
 
 // 会话运行时：拥有 (session, context, plugins, toolRegistry)，对外暴露当前态。
 // 切换 = 两轮之间的原子重建替换（persist 当前 → 物化目标 → 重建三件套 → 切引用）。
 // Context 对切换无感知：切换只在本层换引用，不进 Context 内部。
 class SessionRuntime {
-    constructor({ output, model }) {
+    constructor({
+        output,
+        model,
+        workspaceManager,
+        workspaceRoot,
+        plugins,
+        registryFactory,
+    } = {}) {
         this.output = output;
         // 仅转发宿主能力，不拥有模型生命周期（不切换、不读预算）；可为空（降级）。
         this._model = model || null;
+        this.workspaceManager = workspaceManager || new WorkspaceManager({ root: workspaceRoot });
+        this._pluginOptions = plugins || {};
+        this._registryFactory = typeof registryFactory === 'function'
+            ? registryFactory
+            : createDefaultRegistry;
         this.session = null;
         this.context = null;
         this.plugins = null;
@@ -26,30 +39,49 @@ class SessionRuntime {
     }
 
     // 构建/替换当前会话三件套；loaded 为 null=全新会话，否则为 Session.load 结果。
-    async _build(sessionInstance, loaded) {
-        const plugins = createDefaultRegistry({ services: this._buildServices() });
+    async _build(sessionInstance, loaded, options = {}) {
+        const services = this._buildServices();
+        const plugins = this._registryFactory({
+            services,
+            plugins: this._pluginOptions,
+        });
         const toolRegistry = tools.createRegistry(plugins.getTools());
         const systemPrompt = buildSystemPrompt({
             basePrompt: process.env.SYSTEM_PROMPT,
             toolPrompts: toolRegistry.prompts,
         });
+        const workspace = this.workspaceManager.status();
         const context = new Context(systemPrompt, {
             sessionId: sessionInstance.id,
-            metadata: loaded ? loaded.metadata : undefined,
+            metadata: {
+                ...(loaded && loaded.metadata ? loaded.metadata : {}),
+                workspaceId: workspace.id,
+                workspaceRoot: workspace.root,
+            },
             messages: loaded ? loaded.messages : undefined,
             // 不再从模型读预算：SessionRuntime 不拥有模型。token 预算由宿主（mainloop）
             // 从公共 ModelRuntime 同步进来（setMaxContextTokens），会话层对模型无感知。
             resolveExtension: (name) => plugins.resolveApi(name),
+            resolveService: (name) => services[name] || null,
         });
         // 插件按新 sessionId hydrate；systemPrompt 动态分段随新会话重建。
-        await plugins.init(context);
-        if (loaded) {
-            await plugins.onSessionResume(context, {
-                sessionId: loaded.id,
-                previousClosedAt: loaded.endTime || null,
-                messageCount: loaded.messages.length,
-                lastMessage: loaded.messages[loaded.messages.length - 1] || null,
-            });
+        try {
+            await plugins.init(context, { hydrate: options.hydrate !== false });
+            if (loaded && options.resume !== false) {
+                await plugins.onSessionResume(context, {
+                    sessionId: loaded.id,
+                    previousClosedAt: loaded.endTime || null,
+                    messageCount: loaded.messages.length,
+                    lastMessage: loaded.messages[loaded.messages.length - 1] || null,
+                });
+            }
+        } catch (error) {
+            try {
+                await plugins.dispose(context, { reason: 'build-failed' });
+            } catch (cleanupError) {
+                throw new Error(`${error.message}; plugin cleanup failed: ${cleanupError.message}`);
+            }
+            throw error;
         }
 
         this.session = sessionInstance;
@@ -86,6 +118,11 @@ class SessionRuntime {
     // —— 意图登记（写）：不当场切，避免自我销毁/重入 ——
     requestNew() { this._pending = { type: 'new' }; }
     requestSwitch(id) { this._pending = { type: 'switch', id }; }
+    requestWorkspace(root) {
+        const workspace = this.workspaceManager.prepare(root);
+        this._pending = { type: 'workspace', workspace };
+        return workspace.status();
+    }
     hasPending() { return Boolean(this._pending); }
 
     // —— 安全点执行切换：persist 当前 → 重建替换。只返回结构化事件，显示文本归显示层。 ——
@@ -96,6 +133,10 @@ class SessionRuntime {
 
         try {
             this.persist({ force: true });
+
+            if (pending.type === 'workspace') {
+                return await this._switchWorkspace(pending.workspace);
+            }
 
             if (pending.type === 'new') {
                 await this.plugins.dispose(this.context, { reason: 'session-switch' });
@@ -110,7 +151,73 @@ class SessionRuntime {
             return { type: 'switch', id: this.session.id, messageCount: loaded.messages.length };
         } catch (err) {
             // 切换失败不应中断主循环：返回结构化错误事件，文案由显示层呈现。
+            if (pending.type === 'workspace') {
+                return {
+                    type: 'workspace-error',
+                    root: pending.workspace?.root || null,
+                    detail: err.message,
+                };
+            }
             return { type: 'error', id: pending.id, reason: 'failed', detail: err.message };
+        }
+    }
+
+    async _switchWorkspace(workspace) {
+        const current = this.workspaceManager.current;
+        if (workspace.root === current.root) {
+            return { type: 'workspace-switch', changed: false, ...this.workspaceManager.status() };
+        }
+
+        const checkpoint = this.workspaceManager.checkpoint();
+        const retained = {
+            id: this.session.id,
+            startTime: this.session.startTime,
+            metadata: { ...(this.context.metadata || {}) },
+            messages: this.context.snapshotMessages(),
+        };
+        let rebuilding = false;
+        let newBuildReady = false;
+
+        try {
+            rebuilding = true;
+            await this.plugins.dispose(this.context, { reason: 'workspace-switch' });
+            this.workspaceManager.activate(workspace);
+            const session = new Session({
+                id: retained.id,
+                startTime: retained.startTime,
+                metadata: retained.metadata,
+            });
+            await this._build(session, retained, { hydrate: false, resume: false });
+            newBuildReady = true;
+            this.persist({ force: true });
+            return { type: 'workspace-switch', changed: true, ...this.workspaceManager.status() };
+        } catch (error) {
+            let failure = error;
+            if (newBuildReady) {
+                try {
+                    await this.plugins.dispose(this.context, { reason: 'workspace-rollback' });
+                } catch (cleanupError) {
+                    failure = new Error(
+                        `${error.message}; failed workspace cleanup: ${cleanupError.message}`
+                    );
+                }
+            }
+            this.workspaceManager.restore(checkpoint);
+            if (rebuilding) {
+                try {
+                    const session = new Session({
+                        id: retained.id,
+                        startTime: retained.startTime,
+                        metadata: retained.metadata,
+                    });
+                    await this._build(session, retained, { hydrate: true, resume: false });
+                } catch (rollbackError) {
+                    throw new Error(
+                        `${failure.message}; Workspace rollback failed: ${rollbackError.message}`
+                    );
+                }
+            }
+            throw failure;
         }
     }
 
@@ -122,6 +229,10 @@ class SessionRuntime {
             metadata: this.context.metadata,
             messageCount: this.context.messages.length,
         };
+    }
+
+    workspaceStatus() {
+        return this.workspaceManager.status();
     }
 
     list() { return Session.list(); }
@@ -151,7 +262,13 @@ class SessionRuntime {
     // services.session 能力：读同步返回纯数据；写登记意图、宿主在安全点执行。
     _buildServices() {
         const runtime = this;
+        const prompt = this.output?.prompt;
+        const askUser = prompt && typeof prompt.collect === 'function'
+            ? (question) => prompt.collect(question)
+            : null;
+        const workspaceServices = this.workspaceManager.createRuntimeServices({ askUser });
         return {
+            ...workspaceServices,
             output: this.output,
             // 模型能力转发：插件（如摘要）经此做一次性补全；宿主未注入则为 null（插件应降级）。
             model: this._model
