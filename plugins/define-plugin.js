@@ -1,3 +1,5 @@
+const { validateCapabilityDeclaration } = require('../runtime/capabilities');
+
 function validatePlugin(plugin) {
     if (!plugin || typeof plugin !== 'object') throw new TypeError('Plugin must be an object');
     if (typeof plugin.name !== 'string' || !plugin.name.trim()) {
@@ -9,6 +11,7 @@ function validatePlugin(plugin) {
     if (typeof plugin.onError !== 'function') {
         throw new TypeError(`Plugin "${plugin.name}" must implement onError()`);
     }
+    validateCapabilityDeclaration(`Plugin "${plugin.name}"`, plugin.capabilities);
     return plugin;
 }
 

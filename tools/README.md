@@ -13,10 +13,10 @@ tools/
 
 ## index.js Contract
 
-每个工具的 `index.js` 必须导出：
+每个工具的 `index.js` 必须导出基础字段；需要运行时能力时还要导出声明：
 
 ```js
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, capabilities };
 ```
 
 字段说明：
@@ -24,6 +24,7 @@ module.exports = { definition, handler, prompt };
 - `definition`: OpenAI function calling 格式的工具定义，负责告诉模型工具名、描述和参数结构。
 - `handler`: 实际执行函数，可以是同步或异步函数。
 - `prompt`: 从同目录 `prompt.md` 读取的简短使用说明。
+- `capabilities`: 可选的 `{ required: string[], optional: string[] }` 依赖声明。
 
 ## Tool Template
 
@@ -48,11 +49,14 @@ const definition = {
     },
 };
 
-async function handler({ input }, context) {
+const capabilities = { required: ['fileSystem'] };
+
+async function handler({ input }, context, injectedCapabilities) {
+    const { fileSystem } = injectedCapabilities;
     return `result: ${input}`;
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, capabilities };
 ```
 
 ## prompt.md Rules
@@ -87,9 +91,18 @@ const tools = [existingTool, myTool];
 `tools/index.js` 默认导出的 `definitions`、`prompts` 和 `execute` 只包含核心工具。插件贡献的工具必须通过工具注册表合并：
 
 ```js
-const plugins = createDefaultRegistry();
-const toolRegistry = tools.createRegistry(plugins.getTools());
+const plugins = createDefaultRegistry({ capabilities: runtimeCapabilities });
+const toolRegistry = tools.createRegistry(
+    plugins.getTools(),
+    { capabilities: runtimeCapabilities }
+);
 ```
+
+Tool 注册时会校验 `required` 能力。执行时第三个参数只包含该 Tool 声明过的冻结能力子集；
+Tool 不得通过 Context 或其他全局对象动态查询运行时能力。
+
+上述第三参数规则针对核心 Tool。插件贡献的 Tool 第三参数仍是所属插件的 `ext`；插件所需宿主能力
+必须由 Plugin 对象声明，并在 `init(..., { capabilities })` 中接收，详见 [插件 SDK](../plugins/README.md)。
 
 如果调用 `runAgentLoop` 时用 `options.tools` 过滤工具列表，必须同时传入对应的 `toolRegistry`，否则 runner 会拒绝启动，避免模型看到某个工具但执行器不存在。
 
@@ -98,6 +111,7 @@ const toolRegistry = tools.createRegistry(plugins.getTools());
 - 返回值应为字符串，方便作为 `role: tool` 的消息写入上下文。
 - 如果返回结构化数据，请在 handler 内转为可读文本。
 - 异步工具直接使用 `async function handler(...)`。
+- 运行时依赖必须通过 `capabilities.required/optional` 声明。
 - 不要在工具代码里写死 API Key、Token 或密钥。
 - 外部服务配置应放到独立配置层，如 `github/config.json` 或 `search-providers/config.json`。
 - 工具失败时返回错误字符串，不要直接让进程崩溃。

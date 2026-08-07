@@ -4,7 +4,7 @@
 
 ## 心智模型
 
-> 主程序提供一组**公共功能注入点**；插件按自身需求**挑选组合**。主程序保持中立、不感知任何具体插件。
+> 主程序提供一组运行时能力；插件必须先声明依赖，注册表只注入声明过的能力子集。主程序保持中立、不感知任何具体插件。
 
 公共注入点一览：
 
@@ -13,11 +13,11 @@
 | `tools` | 贡献模型可调用工具 | 可选 |
 | `continuationGuards` | 引导对话轮是否继续（控制环） | 可选 |
 | `onBeforeTurn / onAfterTurn / onToolResult` | 生命周期钩子 | 可选 |
-| `init` 注入的 `services` | 取用宿主通用能力（如 `output` 交互层） | 可选 |
+| `capabilities` 声明与注入 | 取用经过注册表校验的宿主能力子集 | 可选 |
 | `context.systemPrompt` 动态分段 | 往系统提示挂/摘内容 | 可选 |
 | `store` + 版本信封 | 按 `sessionId` 持久化插件状态 | 可选 |
 
-参考实现：`plugins/task-ledger/`（工具 + guard + 状态）、`plugins/ask-user/`（工具 + services + onBeforeTurn + 状态）。
+参考实现：`plugins/task-ledger/`（工具 + guard + 状态）、`plugins/ask-user/`（工具 + 声明式能力 + onBeforeTurn + 状态）。
 
 ---
 
@@ -30,10 +30,10 @@
 const defaultPlugins = [taskLedgerPlugin, askUserPlugin /* , yourPlugin */];
 ```
 
-宿主创建注册表时可注入通用能力（宿主侧，不出现插件名）：
+宿主在组合根提供可用能力；插件只能收到自己声明的部分：
 
 ```js
-createDefaultRegistry({ services: { output } });
+createDefaultRegistry({ capabilities: { output, model, workspace } });
 ```
 
 ---
@@ -46,6 +46,10 @@ createDefaultRegistry({ services: { output } });
 module.exports = {
     name: 'your-plugin',          // string，必填，唯一；用于命名空间与 store 隔离
     scope: 'session',             // string，作用域标识（如 'session' / 'agent'）
+    capabilities: {
+        required: ['workspace'],  // 缺失时注册立即失败
+        optional: ['model'],      // 缺失时不注入
+    },
 
     // —— 工具贡献（二选一）——
     tools: [toolModule],                       // 静态数组
@@ -56,7 +60,7 @@ module.exports = {
     getContinuationGuards(context) { return [guardModule]; },
 
     // —— 初始化：返回 extension（见 §3）——
-    init(context, { store, config, services }) { /* ... */ return extension; },
+    init(context, { store, config, capabilities }) { /* ... */ return extension; },
 
     // —— 生命周期钩子（都在 plugin 对象上被调用，可选）——
     async onBeforeTurn(context) {},                 // 每次模型调用前
@@ -82,7 +86,7 @@ module.exports = {
 `init` 返回一个 extension 对象，承载状态与持久化：
 
 ```js
-init(context, { store, config = {}, services = {} }) {
+init(context, { store, config = {}, capabilities = {} }) {
     const state = /* ... */;
     let dirty = false;
 
@@ -101,7 +105,7 @@ init(context, { store, config = {}, services = {} }) {
 | --- | --- | --- |
 | `store` | `{ read(sessionId)->string\|null, write(sessionId, data) }` | 已按插件 name 隔离的作用域存储 |
 | `config` | `object` | 该插件在注册时的配置 |
-| `services` | `object` | 宿主注入的通用能力总线（见 §6） |
+| `capabilities` | `object` | 仅包含插件显式声明且宿主实际提供的能力（见 §6） |
 
 ---
 
@@ -140,13 +144,27 @@ module.exports = {
 
 ---
 
-## 6. `services` 能力总线（注入点）
+## 6. 声明式运行时能力
 
-宿主把自身公共能力放入 `services`，插件按需取用。当前可用能力：
+插件不能查询全局服务总线。需要宿主能力时，必须在 Plugin 对象上声明：
+
+```js
+capabilities: {
+    required: ['workspace'],
+    optional: ['output', 'model'],
+}
+```
+
+注册表在 `register()` 时校验 `required`；缺失会报告插件名和能力名。`init()` 收到的冻结对象只包含
+声明过的能力，宿主的其他能力不会泄漏给插件。当前组合根可提供的能力包括：
 
 | 能力 | 形状 | 说明 |
 | --- | --- | --- |
-| `services.output` | `Output` 实例 | 输出层；交互收集见下 |
+| `output` | `Output` 实例 | 输出层；交互收集见下 |
+| `model` | 模型完成/流式接口 | 摘要等插件能力 |
+| `workspace` | Workspace 控制接口 | 状态和一次性授权 |
+| `memoryScope` | 项目标识 | Memory 持久化隔离 |
+| `sandboxScope` | 沙盒路径 | Docker Sandbox 隔离 |
 
 交互收集契约（可选子输出 `output.prompt`）：
 
@@ -165,7 +183,8 @@ question = {
 // output.prompt.setInput(rl)  —— 宿主把共享 readline 交给收集器（核心 IO 组装，非插件职责）
 ```
 
-> 取用前务必判空降级：`const cap = services.output?.prompt?.collect ? services.output.prompt : null;` 缺失时插件应优雅降级（如工具返回“不可用”），不要假设能力一定存在。
+> `required` 能力可直接使用；`optional` 能力必须判空降级，例如
+> `const prompt = capabilities.output?.prompt?.collect ? capabilities.output.prompt : null`。
 
 ---
 
@@ -188,7 +207,7 @@ context.systemPrompt.set(content) / get()        // 整段 base 内容
 ## 8. 注册表公共方法（宿主侧）
 
 ```js
-const reg = createDefaultRegistry({ services?, plugins? });
+const reg = createDefaultRegistry({ capabilities?, plugins? });
 await reg.init(context);                 // 初始化所有插件 + hydrate
 reg.getTools(context);                   // 收集命名空间化后的工具
 reg.getContinuationGuards(context);      // 收集注入 ext 后的 guard
@@ -249,7 +268,9 @@ module.exports = {
         // 例如：context.systemPrompt.upsertSection(NAME, ext.summary());
     },
 
-    init(context, { store, config = {}, services = {} } = {}) {
+    capabilities: { optional: ['model'] },
+
+    init(context, { store, config = {}, capabilities = {} } = {}) {
         const state = [];
         let dirty = false;
         return {
@@ -279,7 +300,8 @@ module.exports = {
 ## 11. 自检清单
 
 - [ ] 仅在 `plugins/index.js` 注册，未改动 mainloop / delegate-agent 为本插件接线。
-- [ ] 需要宿主能力时只读 `services`，并对缺失做降级，不假设其一定存在。
+- [ ] 所有宿主依赖均写入 `capabilities.required/optional`，未通过 Context 或全局对象动态查询。
+- [ ] `optional` 能力缺失时能安全降级；真正必需的能力列入 `required`。
 - [ ] 钩子内通过 `context.getExtension(name)` 取状态，不在 plugin 对象上直接持有可变态。
 - [ ] 工具 `handler` 返回字符串，失败返回错误串而非抛出。
 - [ ] 持久化用版本信封 `{ name, version, data }`，hydrate 对损坏/缺失/版本不符降级为空。

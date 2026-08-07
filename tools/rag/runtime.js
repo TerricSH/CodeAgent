@@ -5,7 +5,7 @@ const LocalModelWorker = require('../../model/local-model-worker');
 const LocalEmbeddingProvider = require('../../model/embedding-provider');
 const LocalRerankProvider = require('../../model/rerank-provider');
 
-function createRagService(overrides = {}) {
+function createRagRuntime(overrides = {}) {
     if (overrides.embeddingProvider || overrides.rerankProvider || overrides.localModelWorker) {
         throw new Error(
             'RAG model providers are fixed to local inference; configure localModels paths instead'
@@ -36,4 +36,7 @@ function createRagService(overrides = {}) {
     });
 }
 
-module.exports = { createRagService, RagService };
+// Keep the old JavaScript API name while the tool uses the more precise runtime name.
+const createRagService = createRagRuntime;
+
+module.exports = { createRagRuntime, createRagService, RagService };

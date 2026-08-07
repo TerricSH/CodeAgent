@@ -1,4 +1,4 @@
-const Context = require('../../context');
+const Context = require('../context');
 
 function silentOutput() {
     const noop = () => {};
@@ -15,7 +15,7 @@ function createRolloutTools(executeCommand) {
         type: 'function',
         function: {
             name: 'sandbox_exec',
-            description: 'Execute a shell command inside this rollout workspace.',
+            description: 'Execute a shell command inside this isolated Skill Refinement workspace.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -29,7 +29,7 @@ function createRolloutTools(executeCommand) {
     let queue = Promise.resolve();
     return {
         definitions: [definition],
-        has: (name) => name === 'sandbox_exec',
+        has: name => name === 'sandbox_exec',
         async execute(name, args) {
             if (name !== 'sandbox_exec') return `Unknown rollout tool: ${name}`;
             const task = () => executeCommand(args || {});
@@ -40,32 +40,34 @@ function createRolloutTools(executeCommand) {
     };
 }
 
-function buildTrainingPrompt({ suite, rolloutId }) {
+function buildRefinementRolloutPrompt({ suite, rolloutId }) {
     const protectedText = suite.protectedPaths.length
-        ? suite.protectedPaths.map((item) => `- ${item}`).join('\n')
+        ? suite.protectedPaths.map(item => `- ${item}`).join('\n')
         : '- none';
     return [
-        '# Isolated development training rollout',
+        '# Isolated Skill Refinement rollout',
         '',
-        `You are rollout ${rolloutId} in a controlled development-training experiment.`,
+        `You are rollout ${rolloutId} evaluating a candidate Skill on a controlled task.`,
+        'Follow the candidate Skill while solving the task.',
         'Inspect and modify only the provided workspace through sandbox_exec.',
-        'Do not claim success from your own tests; a separate evaluator scores the final workspace.',
+        'A separate fixed evaluator scores the final workspace.',
         'Do not modify protected paths:',
         protectedText,
-        'Investigate, implement, and run useful checks. End with a concise summary when the task is complete.',
-        suite.skill ? `\n# Current candidate skill\n${suite.skill}` : '',
-    ].filter(Boolean).join('\n');
+        '',
+        '# Candidate Skill',
+        suite.skill,
+    ].join('\n');
 }
 
-async function runAgentRollout(options) {
-    const runAgentLoop = require('../../agent-runner');
+async function runSkillRollout(options) {
+    const runAgentLoop = require('../agent-runner');
     const { model, suite, runId, rolloutId, executeCommand } = options;
     if (!model || typeof model.chat !== 'function') {
-        throw new Error('Training rollouts require a model service with chat()');
+        throw new Error('Skill Refinement rollouts require a model capability with chat()');
     }
-    const context = new Context(buildTrainingPrompt({ suite, rolloutId }), {
+    const context = new Context(buildRefinementRolloutPrompt({ suite, rolloutId }), {
         sessionId: `${runId}:${rolloutId}`,
-        metadata: { type: 'training-rollout', runId, rolloutId, suiteId: suite.id },
+        metadata: { type: 'skill-refinement-rollout', runId, rolloutId, suiteId: suite.id },
     });
     const info = typeof model.info === 'function' ? model.info() : null;
     if (info && Number.isInteger(info.maxContextTokens)) {
@@ -87,6 +89,6 @@ async function runAgentRollout(options) {
 module.exports = {
     silentOutput,
     createRolloutTools,
-    buildTrainingPrompt,
-    runAgentRollout,
+    buildRefinementRolloutPrompt,
+    runSkillRollout,
 };

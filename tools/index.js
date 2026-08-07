@@ -9,6 +9,8 @@ const webSearch = require('./web-search');
 const delegateAgent = require('./delegate-agent');
 const githubSearch = require('./github-search');
 const rag = require('./rag');
+const skillRefinement = require('./skill-refinement');
+const { selectCapabilities } = require('../runtime/capabilities');
 
 const coreTools = [
     runCommand,
@@ -22,10 +24,16 @@ const coreTools = [
     delegateAgent,
     githubSearch,
     rag,
+    skillRefinement,
 ];
 
-function createRegistry(extraTools = []) {
-    const registeredTools = [...coreTools, ...extraTools];
+function createRegistry(extraTools = [], options = {}) {
+    const registeredTools = [
+        ...(options.includeCore === false ? [] : coreTools),
+        ...extraTools,
+    ];
+    const availableCapabilities = options.capabilities || {};
+    const validateCapabilities = options.validateCapabilities !== false;
     const handlers = {};
 
     for (const tool of registeredTools) {
@@ -38,7 +46,15 @@ function createRegistry(extraTools = []) {
         if (Object.prototype.hasOwnProperty.call(handlers, name)) {
             throw new Error(`Duplicate tool registration: ${name}`);
         }
-        handlers[name] = tool.handler;
+        handlers[name] = {
+            handler: tool.handler,
+            capabilities: selectCapabilities(
+                availableCapabilities,
+                tool.capabilities,
+                `Tool "${name}"`,
+                { allowMissing: !validateCapabilities }
+            ),
+        };
     }
 
     function has(name) {
@@ -55,14 +71,16 @@ function createRegistry(extraTools = []) {
         has,
         names,
         async execute(name, args, context) {
-            const handler = handlers[name];
-            if (!handler) return `未知工具: ${name}`;
-            return await handler(args, context);
+            const entry = handlers[name];
+            if (!entry) return `未知工具: ${name}`;
+            return await entry.handler(args, context, entry.capabilities);
         },
     };
 }
 
-const defaultRegistry = createRegistry();
+// 模块级默认注册表只用于定义枚举与向后兼容；实际运行时必须通过
+// createRegistry(..., { capabilities }) 创建并校验依赖。
+const defaultRegistry = createRegistry([], { validateCapabilities: false });
 
 module.exports = {
     coreTools,

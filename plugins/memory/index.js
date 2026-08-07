@@ -9,15 +9,16 @@ module.exports = definePlugin({
     name: NAME,
     scope: 'session',
     tools,
+    capabilities: { optional: ['memoryScope'] },
 
     onError(error) {
         throw error;
     },
 
-    init(context, { store, config = {}, services = {} } = {}) {
+    init(context, { store, config = {}, capabilities = {} } = {}) {
         const memory = new MemoryService(context, new MemoryRepository(), {
             ...config,
-            projectKey: config.projectKey || services.memoryScope?.projectKey,
+            projectKey: config.projectKey || capabilities.memoryScope?.projectKey,
         });
         return {
             getApi: () => memory,

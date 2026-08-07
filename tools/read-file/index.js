@@ -1,9 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const {
-    requireRuntimeService,
-    formatServiceError,
-} = require('../runtime-service');
+const { requireCapability } = require('../../runtime/capabilities');
+const { formatCapabilityError } = require('../capability-error');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
@@ -22,15 +20,17 @@ const definition = {
     },
 };
 
-function handler({ path: filePath }, context) {
+const capabilities = { required: ['fileSystem'] };
+
+function handler({ path: filePath }, context, injectedCapabilities) {
     let fileSystem = null;
     try {
-        fileSystem = requireRuntimeService(context, 'fileSystem');
+        fileSystem = requireCapability(injectedCapabilities, 'fileSystem');
         const resolved = fileSystem.resolveExisting(filePath, { type: 'file' });
         return fs.readFileSync(resolved, 'utf-8');
     } catch (err) {
-        return formatServiceError(fileSystem, err, '读取失败');
+        return formatCapabilityError(fileSystem, err, '读取失败');
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, capabilities };

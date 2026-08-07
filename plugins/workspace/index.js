@@ -7,14 +7,14 @@ module.exports = definePlugin({
     name: NAME,
     scope: 'session',
     tools,
+    capabilities: { required: ['workspace'] },
 
     onError(error) {
         throw error;
     },
 
-    init(context, { services = {} } = {}) {
-        const workspace = services.workspace;
-        if (!workspace) throw new Error('Runtime workspace control service is unavailable');
+    init(context, { capabilities } = {}) {
+        const { workspace } = capabilities;
         return {
             getApi: () => workspace,
             isDirty: () => false,
