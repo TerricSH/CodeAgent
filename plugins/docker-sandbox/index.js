@@ -8,23 +8,20 @@ module.exports = definePlugin({
     name: NAME,
     scope: 'session',
     tools,
+    capabilities: { optional: ['sandboxScope'] },
 
     onError(error) {
         throw error;
     },
 
-    init(context, { store, config = {}, services = {} } = {}) {
-        const scope = services.sandboxScope;
+    init(context, { store, config = {}, capabilities = {} } = {}) {
+        const scope = capabilities.sandboxScope;
         const effectiveConfig = scope ? {
             ...config,
             projectRoot: config.projectRoot || scope.projectRoot,
             sandboxRoot: config.sandboxRoot || scope.sandboxRoot,
         } : config;
-        const sandbox = new DockerSandboxService(
-            context.sessionId,
-            effectiveConfig,
-            { model: services.model || null }
-        );
+        const sandbox = new DockerSandboxService(context.sessionId, effectiveConfig);
         return {
             getApi: () => sandbox,
             isDirty: () => sandbox.dirty,

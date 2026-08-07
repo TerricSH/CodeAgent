@@ -1,9 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const {
-    requireRuntimeService,
-    formatServiceError,
-} = require('../runtime-service');
+const { requireCapability } = require('../../runtime/capabilities');
+const { formatCapabilityError } = require('../capability-error');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 
@@ -35,8 +33,10 @@ const definition = {
     },
 };
 
+const capabilities = { required: ['fileSystem'] };
+
 function errorDetail(fileSystem, error) {
-    const formatted = formatServiceError(fileSystem, error, '写入失败');
+    const formatted = formatCapabilityError(fileSystem, error, '写入失败');
     try {
         return JSON.parse(formatted);
     } catch {
@@ -44,10 +44,10 @@ function errorDetail(fileSystem, error) {
     }
 }
 
-function handler(args = {}, context) {
+function handler(args = {}, context, injectedCapabilities) {
     let fileSystem = null;
     try {
-        fileSystem = requireRuntimeService(context, 'fileSystem');
+        fileSystem = requireCapability(injectedCapabilities, 'fileSystem');
         if (!Array.isArray(args.files) || args.files.length === 0) {
             throw new TypeError('files 必须是非空数组');
         }
@@ -91,8 +91,8 @@ function handler(args = {}, context) {
             results,
         }, null, 2);
     } catch (error) {
-        return formatServiceError(fileSystem, error, '批量写入失败');
+        return formatCapabilityError(fileSystem, error, '批量写入失败');
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, capabilities };

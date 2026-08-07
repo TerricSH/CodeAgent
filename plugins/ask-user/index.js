@@ -12,6 +12,7 @@ const askUserPlugin = definePlugin({
     name: NAME,
     scope: 'session',
     tools: [tool],
+    capabilities: { optional: ['output'] },
 
     onError(error) {
         throw error;
@@ -31,9 +32,9 @@ const askUserPlugin = definePlugin({
         }
     },
 
-    init(context, { store, services = {} } = {}) {
+    init(context, { store, capabilities = {} } = {}) {
         // 交互能力来自宿主通用注入的 output（不感知具体宿主/模式）；缺省则降级为不可用。
-        const output = services && services.output;
+        const output = capabilities.output;
         const prompt = output && output.prompt && typeof output.prompt.collect === 'function'
             ? output.prompt
             : null;

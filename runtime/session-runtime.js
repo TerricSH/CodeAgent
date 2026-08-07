@@ -40,12 +40,15 @@ class SessionRuntime {
 
     // 构建/替换当前会话三件套；loaded 为 null=全新会话，否则为 Session.load 结果。
     async _build(sessionInstance, loaded, options = {}) {
-        const services = this._buildServices();
+        const capabilities = this._buildCapabilities();
         const plugins = this._registryFactory({
-            services,
+            capabilities,
             plugins: this._pluginOptions,
         });
-        const toolRegistry = tools.createRegistry(plugins.getTools());
+        const toolRegistry = tools.createRegistry(
+            plugins.getTools(),
+            { capabilities }
+        );
         const systemPrompt = buildSystemPrompt({
             basePrompt: process.env.SYSTEM_PROMPT,
             toolPrompts: toolRegistry.prompts,
@@ -62,7 +65,6 @@ class SessionRuntime {
             // 不再从模型读预算：SessionRuntime 不拥有模型。token 预算由宿主（mainloop）
             // 从公共 ModelRuntime 同步进来（setMaxContextTokens），会话层对模型无感知。
             resolveExtension: (name) => plugins.resolveApi(name),
-            resolveService: (name) => services[name] || null,
         });
         // 插件按新 sessionId hydrate；systemPrompt 动态分段随新会话重建。
         try {
@@ -259,16 +261,16 @@ class SessionRuntime {
         return { items, cursor: items.length ? items[items.length - 1].message_index : null, count: items.length };
     }
 
-    // services.session 能力：读同步返回纯数据；写登记意图、宿主在安全点执行。
-    _buildServices() {
+    // 组合根创建能力集合；注册表只会把各消费者显式声明的子集注入进去。
+    _buildCapabilities() {
         const runtime = this;
         const prompt = this.output?.prompt;
         const askUser = prompt && typeof prompt.collect === 'function'
             ? (question) => prompt.collect(question)
             : null;
-        const workspaceServices = this.workspaceManager.createRuntimeServices({ askUser });
+        const workspaceCapabilities = this.workspaceManager.createRuntimeCapabilities({ askUser });
         return {
-            ...workspaceServices,
+            ...workspaceCapabilities,
             output: this.output,
             // 模型能力转发：插件（如摘要）经此做一次性补全；宿主未注入则为 null（插件应降级）。
             model: this._model
@@ -278,13 +280,6 @@ class SessionRuntime {
                     info: () => runtime._model.info(),
                 }
                 : null,
-            session: {
-                current: () => runtime.current(),
-                list: () => runtime.list(),
-                query: (opts) => runtime.query(opts),
-                requestNew: () => runtime.requestNew(),
-                requestSwitch: (id) => runtime.requestSwitch(id),
-            },
         };
     }
 

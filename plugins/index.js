@@ -7,9 +7,6 @@ const workspacePlugin = require('./workspace');
 const autoCompactionPlugin = require('./auto-compaction');
 const memoryPlugin = require('./memory');
 const dockerSandboxPlugin = require('./docker-sandbox');
-const trajectoryRecorderPlugin = require('./trajectory-recorder');
-const rewardEvaluatorPlugin = require('./reward-evaluator');
-const trainingManagerPlugin = require('./training-manager');
 const PluginError = require('./plugin-error');
 const { definePlugin, validatePlugin } = require('./define-plugin');
 
@@ -20,9 +17,6 @@ const defaultPlugins = [
     memoryPlugin,
     autoCompactionPlugin,
     dockerSandboxPlugin,
-    trajectoryRecorderPlugin,
-    rewardEvaluatorPlugin,
-    trainingManagerPlugin,
 ];
 
 function getPluginConfig(name, options = {}) {
@@ -39,7 +33,7 @@ function getPluginConfig(name, options = {}) {
 function createDefaultRegistry(options = {}) {
     const registry = new PluginRegistry({
         storeFactory: createScopedStore,
-        services: options.services || {},
+        capabilities: options.capabilities || {},
     });
 
     for (const plugin of defaultPlugins) {
@@ -57,9 +51,6 @@ module.exports = {
     autoCompactionPlugin,
     memoryPlugin,
     dockerSandboxPlugin,
-    trajectoryRecorderPlugin,
-    rewardEvaluatorPlugin,
-    trainingManagerPlugin,
     PluginError,
     definePlugin,
     validatePlugin,

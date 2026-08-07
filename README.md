@@ -72,9 +72,9 @@ Use the CLI command below to inspect or switch the active Workspace without rest
 ```
 
 Relative switch paths are resolved from the current Workspace. Switching is performed only between
-turns: the current session is persisted, session-scoped services are disposed, an immutable Workspace
+turns: the current session is persisted, session-scoped plugins are disposed, an immutable Workspace
 snapshot is activated, and plugins/tools are rebuilt. The conversation is preserved. If rebuilding
-fails, the runtime restores the previous Workspace and rebuilds its services.
+fails, the runtime restores the previous Workspace and rebuilds its plugins and tools.
 
 Workspace is a runtime-owned service, not the source of truth inside a plugin. Core file tools receive
 only a file-resolution capability, `run_command` receives only a command working-directory scope,
@@ -223,6 +223,7 @@ module.exports = {
 - `activate_skill`: 激活 skill
 - `delegate_agent`: 委托子 agent
 - `rag`: 将当前项目源码索引到 PostgreSQL，或检索已索引的项目知识
+- `skill_refinement`: 通过隔离 Rollout、固定评测和结果综合生成精炼后的 Skill 候选
 
 新增工具规范见 [tools/README.md](tools/README.md)。
 
@@ -237,13 +238,13 @@ module.exports = {
 - `memory`: 检索当前会话及持久化记忆。
 - `auto-compaction`: 在上下文接近预算时生成传输层摘要。
 - `docker-sandbox`: 在会话隔离的 Docker 工作区中执行非交互命令。
-- `trajectory-recorder`: 记录任务、工具调用、结果和奖励，并导出 JSONL。
-- `reward-evaluator`: 把显式标记为评测的沙盒命令转换成奖励信号。
-- `training-manager`: 自动发现本地模型包，并按需启动包内 Python Worker 训练。
 
-插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态、metadata 和插件状态，不再直接实例化任务清单。
+插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态和 metadata；插件状态由插件注册表管理。
 
-宿主可在创建注册表时通过 `createDefaultRegistry({ services })` 注入通用能力（如 `services.output` 交互层），这些能力会传给每个插件的 `init(context, { store, config, services })`。宿主只提供通用能力、不感知具体插件；插件自带的终端文案随插件存放在插件目录内，不写入核心 `renderers/<mode>/labels.json`。
+插件和核心 Tool 通过 `capabilities.required/optional` 显式声明运行时依赖。宿主只在组合根提供
+`capabilities`，注册表负责校验必需项，并向每个消费者注入声明过的冻结子集。`Context` 不提供
+服务查询入口，插件和 Tool 无法把它当作隐式依赖总线。插件自带的终端文案随插件存放在插件目录内，
+不写入核心 `renderers/<mode>/labels.json`。
 
 新增插件规范与接口清单见 [plugins/README.md](plugins/README.md)。
 
@@ -258,7 +259,8 @@ collection 中召回并 rerank。检索流程为：
 ```
 
 代码职责按层拆分：数据库 Repository 位于 `data-layer/`，Embedding、rerank 与模型 Worker
-位于 `model/`，文件发现和切块位于 `workspace/`，只有 Tool 编排与参数接口位于 `tools/rag/`。
+位于 `model/`；`tools/rag/compiler.js` 负责项目编译，`query.js` 负责检索与 rerank，
+`presenter.js` 负责结果展示，`index.js` 只负责 Tool action 路由和权限检查。
 Embedding 与 rerank 由受管的本机 Python 子进程执行，强制离线模式，不调用外部模型服务。
 
 `rag` 支持 `status`、`index_project`、`search`、`list_documents` 和 `delete_document` 操作。
@@ -290,38 +292,21 @@ npm run sandbox:build
 - `docker-sandbox__sandbox_exec`
 - `docker-sandbox__sandbox_reset`
 
-普通命令使用 `purpose: "work"`。只有真正决定任务成败的测试命令才使用
-`purpose: "evaluation"`，后者会被 `reward-evaluator` 转换成奖励。
+### Skill Refinement Tool
 
-显式的开发训练不使用日常会话自动沉淀。训练任务由
-[`training/suites/`](training/suites/README.md) 下的宿主清单定义；一次训练会从同一基准快照创建
-多个独立 Rollout，使用清单中不可覆盖的评测命令和保护路径评分，选择最佳候选，并导出
-`skillopt-rollouts.jsonl`。训练产物只留在 `.code/sandboxes/<session>/training-runs/`，不会直接
-写回宿主项目。
+Skill Refinement 是 SkillOpt 风格的技能精炼能力，不训练模型权重，也不管理梯度、优化器或
+checkpoint。宿主在 [`skill-refinement/suites/`](skill-refinement/suites/README.md) 中固定任务、
+初始 Skill、评测命令和保护路径；`skill_refinement` Tool 从同一安全快照启动多个隔离 Rollout，
+执行固定评测并排名，再根据完整评测证据生成 `refined-skill.md` 候选。
 
-训练工具：
-
-- `docker-sandbox__sandbox_training_suites`
-- `docker-sandbox__sandbox_training_start`
-- `docker-sandbox__sandbox_training_history`
-- `docker-sandbox__sandbox_training_result`
-
-### Reinforcement-learning data
-
-一次完整回复形成一条 trajectory。执行
-`trajectory-recorder__trajectory_export` 后，数据写入：
+Tool 支持 `status`、`list_suites`、`refine`、`history` 和 `result`。只有主 agent 可以启动
+`refine`。源 Skill 不会被自动覆盖，结果和 `refinement-rollouts.jsonl` 只写入：
 
 ```text
-.code/rl/trajectories/<session-id>.jsonl
+.code/sandboxes/<session>/skill-refinement-runs/<run-id>/
 ```
 
-CodeAgent 负责 rollout、工具环境、验证和轨迹采集；模型梯度、优化器和 checkpoint
-由独立训练进程管理。数据格式和训练边界见 [training/README.md](training/README.md)。
-
-模型、tokenizer、对话模板和 Python 训练入口可以一起放入
-`training/models/<model-id>/`。框架只读取 `manifest.json` 完成发现和能力校验；调用
-`training-manager__training_start` 时才启动 Python 文件。模型包格式与 JSONL 协议见
-[training/models/README.md](training/models/README.md)。
+模块边界和 suite 格式见 [skill-refinement/README.md](skill-refinement/README.md)。
 
 ## Search Config
 
@@ -365,7 +350,8 @@ model-providers/         # 模型接入：厂商/兼容接口/模型（含 inter
 model/                   # RAG 本地 Embedding、rerank、Worker 与模型文件
 context/                 # 对话上下文
 plugins/                 # 运行时插件
-training/                # 模型/算法训练契约、能力协商和 Worker 适配
+skill-refinement/        # SkillOpt 风格的 Rollout、评测、排名和 Skill 候选综合
+sandbox/                 # Docker 隔离执行的共享基础设施
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
 data-layer/              # SQLite/PostgreSQL 数据访问与 repository
@@ -374,7 +360,7 @@ renderers/               # 输出层插件入口与 CLI/TUI 实现
 event-dispatcher/        # 模型事件分发
 skills/                  # skill 配置
 agents/                  # subagent 配置
-tools/                   # 核心工具（包括单一 rag Tool）
+tools/                   # 核心工具（包括 rag 与 skill_refinement）
 search-providers/        # Web 搜索 provider
 github/                  # GitHub API 配置与客户端
 ```

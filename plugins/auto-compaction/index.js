@@ -4,11 +4,12 @@ const { definePlugin } = require('../define-plugin');
 const NAME = 'auto-compaction';
 
 // auto-compaction 扩展：纯 onBeforeTurn 钩子，无工具/守卫。
-// 用量超阈值时调 services.model 生成摘要，经 context.setTransportOverlay 仅作用于传输态。
+// 用量超阈值时调声明注入的 model 能力生成摘要，经 context.setTransportOverlay 仅作用于传输态。
 // 存储态始终全量；摘要为派生的传输覆盖，不持久化，重载后下一轮按需重算。
 const autoCompactionPlugin = definePlugin({
     name: NAME,
     scope: 'session',
+    capabilities: { optional: ['model'] },
 
     onError(error) {
         throw error;
@@ -31,9 +32,9 @@ const autoCompactionPlugin = definePlugin({
         if (ext && typeof ext.schedule === 'function') ext.schedule(context);
     },
 
-    // 模型能力来自宿主通用注入的 services.model；缺省则 Compactor 自动降级为不压缩。
-    init(context, { store, config = {}, services = {} } = {}) {
-        const compactor = new Compactor(services && services.model, config);
+    // 模型能力是显式声明的可选依赖；缺省则 Compactor 自动降级为不压缩。
+    init(context, { store, config = {}, capabilities = {} } = {}) {
+        const compactor = new Compactor(capabilities.model || null, config);
         return {
             getApi: () => compactor,
             isDirty: () => compactor.dirty,

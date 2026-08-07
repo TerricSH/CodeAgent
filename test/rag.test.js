@@ -7,6 +7,9 @@ const { chunkText } = require('../tools/rag/chunker');
 const { listProjectFiles } = require('../tools/rag/project-files');
 const { normalizeVector, dotProduct } = require('../model/vector');
 const { RagService } = require('../tools/rag/service');
+const RagCompiler = require('../tools/rag/compiler');
+const RagQuery = require('../tools/rag/query');
+const { RagPresenter } = require('../tools/rag/presenter');
 const RagRepository = require('../data-layer/repositories/rag-repository');
 const LocalModelWorker = require('../model/local-model-worker');
 const LocalEmbeddingProvider = require('../model/embedding-provider');
@@ -118,19 +121,21 @@ class ReverseReranker {
     }
 }
 
+const TEST_CONFIG = Object.freeze({
+    defaultCollection: 'global',
+    chunkSize: 100,
+    chunkOverlap: 10,
+    maxDocumentChars: 10_000,
+    candidateLimit: 10,
+    embedding: { dimensions: 2 },
+});
+
 function createService(overrides = {}) {
     return new RagService({
         repository: overrides.repository || new FakeRepository(),
         embeddingProvider: overrides.embeddingProvider || new FakeEmbeddingProvider(),
         rerankProvider: overrides.rerankProvider || new ReverseReranker(),
-        config: {
-            defaultCollection: 'global',
-            chunkSize: 100,
-            chunkOverlap: 10,
-            maxDocumentChars: 10_000,
-            candidateLimit: 10,
-            embedding: { dimensions: 2 },
-        },
+        config: TEST_CONFIG,
     });
 }
 
@@ -236,6 +241,62 @@ test('RAG service ingests embeddings, retrieves candidates, and applies rerank o
     assert.ok(result.results.every((item) => Number.isFinite(item.vectorScore)));
 });
 
+test('RAG compiler, query, and presenter have independent responsibilities', async () => {
+    const repository = new FakeRepository();
+    const embeddingProvider = new FakeEmbeddingProvider();
+    const compiler = new RagCompiler({ repository, embeddingProvider, config: TEST_CONFIG });
+    const query = new RagQuery({
+        repository,
+        embeddingProvider,
+        rerankProvider: new ReverseReranker(),
+        config: TEST_CONFIG,
+    });
+    const presenter = new RagPresenter();
+
+    assert.equal(typeof compiler.compileText, 'function');
+    assert.equal(typeof compiler.search, 'undefined');
+    assert.equal(typeof query.search, 'function');
+    assert.equal(typeof query.compileText, 'undefined');
+
+    await compiler.compileText({ content: 'alpha knowledge', source: 'doc:alpha' });
+    const result = await query.search({ query: 'alpha', topK: 1 });
+    const rendered = JSON.parse(presenter.present('search', result));
+    assert.equal(rendered.results[0].source, 'doc:alpha');
+});
+
+test('RAG compiler owns project discovery and compilation', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codeagent-rag-compiler-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    fs.writeFileSync(path.join(root, 'app.js'), 'const answer = 42;', 'utf8');
+    fs.writeFileSync(path.join(root, 'ignored.txt'), 'not indexed', 'utf8');
+
+    const repository = new FakeRepository();
+    const compiler = new RagCompiler({
+        repository,
+        embeddingProvider: new FakeEmbeddingProvider(),
+        config: TEST_CONFIG,
+    });
+    const result = await compiler.compileProject({
+        collection: 'workspace:test',
+        extensions: ['.js'],
+    }, {
+        workspace: { status: () => ({ root }) },
+        fileSystem: {
+            resolveExisting: filePath => path.join(root, filePath),
+        },
+    });
+
+    assert.deepEqual(result, {
+        collection: 'workspace:test',
+        total: 1,
+        indexed: 1,
+        unchanged: 0,
+        failed: 0,
+        failures: [],
+    });
+    assert.equal(repository.findDocumentBySource('workspace:test', 'workspace:app.js').title, 'app.js');
+});
+
 test('RAG ingestion is idempotent for an unchanged stable source', async () => {
     const embeddingProvider = new FakeEmbeddingProvider();
     const service = createService({ embeddingProvider });
@@ -319,39 +380,68 @@ test('RAG is one core tool and is not a default plugin', () => {
     assert.equal(ragTool.definition.function.name, 'rag');
     assert.equal(tools.has('rag'), true);
     assert.equal(tools.names().some(name => name.startsWith('rag__')), false);
-    assert.equal(createDefaultRegistry().list().some(plugin => plugin.name === 'rag'), false);
+    assert.equal(createDefaultRegistry({
+        capabilities: { workspace: {} },
+    }).list().some(plugin => plugin.name === 'rag'), false);
 });
 
-test('RAG tool indexes Workspace files and prevents subagent mutation', async (t) => {
+test('RAG tool routes compilation, query, and presentation without mixing them', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codeagent-rag-tool-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
     fs.writeFileSync(path.join(root, 'app.js'), 'const answer = 42;', 'utf8');
     const calls = [];
-    const fakeService = {
-        async ingestText(options) {
-            calls.push(options);
-            return { unchanged: false, chunks: 1 };
+    const fakeRuntime = {
+        compiler: {
+            async compileProject(options, injectedCapabilities) {
+                calls.push({ component: 'compiler', options, injectedCapabilities });
+                return { collection: options.collection, indexed: 1, unchanged: 0, failed: 0 };
+            },
         },
-        async search(options) { return { query: options.query, results: [] }; },
+        query: {
+            async search(options) {
+                calls.push({ component: 'query', options });
+                return { query: options.query, collection: options.collection, results: [] };
+            },
+            async listDocuments(options) {
+                calls.push({ component: 'query-list', options });
+                return { collection: options.collection, documents: [] };
+            },
+        },
         async dispose() {},
     };
-    const services = {
+    const presenter = {
+        present(action, result) {
+            calls.push({ component: 'presenter', action, result });
+            return JSON.stringify(result);
+        },
+        presentError(action, error) {
+            return JSON.stringify({ ok: false, action, error: error.message });
+        },
+    };
+    const capabilities = {
         workspace: { status: () => ({ id: 'test', root }) },
         fileSystem: { resolveExisting: () => path.join(root, 'app.js') },
     };
     const context = {
         metadata: {},
-        getService(name) { return services[name] || null; },
     };
-    const handler = ragTool.createHandler({ createService: () => fakeService });
+    const handler = ragTool.createHandler({
+        createRuntime: () => fakeRuntime,
+        presenter,
+    });
 
-    const indexed = JSON.parse(await handler({ action: 'index_project' }, context));
+    const indexed = JSON.parse(await handler({ action: 'index_project' }, context, capabilities));
     assert.equal(indexed.indexed, 1);
-    assert.equal(calls[0].source, 'workspace:app.js');
-    assert.equal(calls[0].collection, 'workspace:test');
+    assert.equal(calls[0].component, 'compiler');
+    assert.equal(calls[0].options.collection, 'workspace:test');
+    assert.equal(calls[1].component, 'presenter');
+
+    await handler({ action: 'search', query: 'answer' }, context, capabilities);
+    assert.equal(calls[2].component, 'query');
+    assert.equal(calls[3].component, 'presenter');
 
     context.metadata = { type: 'subagent' };
-    const blocked = JSON.parse(await handler({ action: 'index_project' }, context));
+    const blocked = JSON.parse(await handler({ action: 'index_project' }, context, capabilities));
     assert.match(blocked.error, /may not index/);
 });
 

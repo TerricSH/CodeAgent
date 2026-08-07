@@ -5,9 +5,19 @@ RAG 是 CodeAgent 的一个核心 Tool，不是插件，也不是承载数据库
 
 ## 代码边界
 
-- `tools/rag/`：Tool 参数、项目文件选择、切块和 RAG service 编排。
+RAG 对外仍然只有一个 `rag` Tool，内部按职责拆开：
+
+- `tools/rag/index.js`：解析 action、执行权限检查并把请求路由给对应模块。
+- `tools/rag/compiler.js`：发现项目文件、读取文本、切块、生成 Embedding 并写入 Repository。
+- `tools/rag/query.js`：生成查询向量、执行 pgvector 候选召回并 rerank。
+- `tools/rag/presenter.js`：把编译、查询、文档和管理结果转换为 Tool 输出。
+- `tools/rag/service.js`：兼容原 JavaScript API，组装 compiler/query，并管理数据库和模型资源生命周期。
+- `tools/rag/contracts.js`：编译与查询共同使用的输入校验，不包含业务流程。
 - `data-layer/repositories/rag-repository.js`：PostgreSQL + pgvector 数据访问。
 - `model/`：本地 Embedding、rerank、Python Worker 和模型文件。
+
+依赖方向是 `Tool 路由 → compiler/query → Repository 与模型接口`，展示层只接收操作结果，
+不访问数据库、模型或 Workspace。Repository 也不依赖 Tool。
 
 默认插件注册表不加载 RAG，也不创建进程级共享实例。Workspace 不保存 RAG 状态，也不提供
 `ragScope`。RAG Tool 只读取通用的 Workspace `id` 和 `root`，自行选择项目文件并计算 collection，
@@ -16,7 +26,9 @@ RAG 是 CodeAgent 的一个核心 Tool，不是插件，也不是承载数据库
 ## 处理流程
 
 ```text
-项目文件扫描 → 源码切块 → Embedding → PostgreSQL/pgvector → HNSW 召回 → rerank
+编译：项目文件扫描 → 源码切块 → Embedding → PostgreSQL/pgvector
+查询：问题 Embedding → HNSW 候选召回 → rerank
+展示：编译结果 / 查询结果 / 管理结果 → Tool JSON 输出
 ```
 
 `index_project` 默认排除 `node_modules`、`.git`、`.code` 和 `workspace` 目录，跳过符号链接、

@@ -1,5 +1,5 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const SUITE_VERSION = 1;
 const DEFAULT_PROTECTED_PATHS = Object.freeze([
@@ -7,8 +7,9 @@ const DEFAULT_PROTECTED_PATHS = Object.freeze([
     '.github',
     'prompts',
     'skills/core-development',
+    'skill-refinement',
+    'tools/skill-refinement',
     'plugins/docker-sandbox',
-    'plugins/reward-evaluator',
     'package.json',
     'package-lock.json',
 ]);
@@ -34,7 +35,7 @@ function normalizeRelative(value, label) {
     }
     const normalized = path.normalize(value.trim());
     if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
-        throw new Error(`${label} escapes the training project`);
+        throw new Error(`${label} escapes the Skill Refinement project`);
     }
     return normalized;
 }
@@ -43,51 +44,67 @@ function loadSuite(suitesRoot, suiteId, projectRoot) {
     if (typeof suiteId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(suiteId)) {
         throw new Error('suiteId is invalid');
     }
-    if (!fs.existsSync(suitesRoot)) throw new Error(`Training suite root does not exist: ${suitesRoot}`);
+    if (!fs.existsSync(suitesRoot)) {
+        throw new Error(`Skill Refinement suite root does not exist: ${suitesRoot}`);
+    }
     const suiteDir = path.join(suitesRoot, suiteId);
     const manifestPath = path.join(suiteDir, 'suite.json');
-    if (!fs.existsSync(manifestPath)) throw new Error(`Unknown training suite: ${suiteId}`);
-    assertInside(suitesRoot, suiteDir, 'Training suite');
+    if (!fs.existsSync(manifestPath)) throw new Error(`Unknown Skill Refinement suite: ${suiteId}`);
+    assertInside(suitesRoot, suiteDir, 'Skill Refinement suite');
 
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
-        throw new Error('Training suite manifest must be an object');
+        throw new Error('Skill Refinement suite manifest must be an object');
     }
     if (manifest.schemaVersion !== SUITE_VERSION) {
-        throw new Error(`Unsupported training suite schemaVersion: ${manifest.schemaVersion}`);
+        throw new Error(`Unsupported Skill Refinement suite schemaVersion: ${manifest.schemaVersion}`);
     }
-    if (manifest.id !== suiteId) throw new Error('Training suite id must match its directory name');
+    if (manifest.id !== suiteId) {
+        throw new Error('Skill Refinement suite id must match its directory name');
+    }
     if (typeof manifest.task !== 'string' || !manifest.task.trim()) {
-        throw new Error('Training suite task is required');
+        throw new Error('Skill Refinement suite task is required');
     }
-    if (manifest.task.length > 16000) throw new Error('Training suite task exceeds 16000 characters');
+    if (manifest.task.length > 16000) {
+        throw new Error('Skill Refinement suite task exceeds 16000 characters');
+    }
     if (!manifest.evaluation || typeof manifest.evaluation !== 'object') {
-        throw new Error('Training suite evaluation configuration is required');
+        throw new Error('Skill Refinement suite evaluation configuration is required');
     }
     const evaluationCommand = typeof manifest.evaluation.command === 'string'
         ? manifest.evaluation.command.trim()
         : '';
-    if (!evaluationCommand) throw new Error('Training suite evaluation.command is required');
+    if (!evaluationCommand) {
+        throw new Error('Skill Refinement suite evaluation.command is required');
+    }
     if (evaluationCommand.length > 32768) {
-        throw new Error('Training suite evaluation.command exceeds 32768 characters');
+        throw new Error('Skill Refinement suite evaluation.command exceeds 32768 characters');
     }
 
     const baselineRelative = manifest.baseline === undefined
         ? '.'
         : normalizeRelative(manifest.baseline, 'baseline');
-    const baseline = assertInside(projectRoot, path.resolve(projectRoot, baselineRelative), 'Baseline');
+    const baseline = assertInside(
+        projectRoot,
+        path.resolve(projectRoot, baselineRelative),
+        'Skill Refinement baseline'
+    );
     const protectedPaths = (manifest.protectedPaths || DEFAULT_PROTECTED_PATHS)
         .map((item, index) => normalizeRelative(item, `protectedPaths[${index}]`));
 
-    let skill = '';
-    let skillPath = null;
-    if (manifest.skillPath !== undefined) {
-        const relative = normalizeRelative(manifest.skillPath, 'skillPath');
-        skillPath = assertInside(suiteDir, path.resolve(suiteDir, relative), 'Skill seed');
-        if (!fs.statSync(skillPath).isFile()) throw new Error('skillPath must point to a file');
-        skill = fs.readFileSync(skillPath, 'utf8');
-        if (skill.length > 32000) throw new Error('Skill seed exceeds 32000 characters');
+    if (manifest.skillPath === undefined) {
+        throw new Error('Skill Refinement suite skillPath is required');
     }
+    const skillRelative = normalizeRelative(manifest.skillPath, 'skillPath');
+    const skillPath = assertInside(
+        suiteDir,
+        path.resolve(suiteDir, skillRelative),
+        'Skill seed'
+    );
+    if (!fs.statSync(skillPath).isFile()) throw new Error('skillPath must point to a file');
+    const skill = fs.readFileSync(skillPath, 'utf8');
+    if (!skill.trim()) throw new Error('Skill seed must not be empty');
+    if (skill.length > 64000) throw new Error('Skill seed exceeds 64000 characters');
 
     return Object.freeze({
         schemaVersion: SUITE_VERSION,
@@ -111,8 +128,8 @@ function listSuites(suitesRoot, projectRoot) {
     const suites = [];
     const errors = [];
     const entries = fs.readdirSync(suitesRoot, { withFileTypes: true })
-        .filter((entry) => entry.isDirectory())
-        .sort((a, b) => a.name.localeCompare(b.name));
+        .filter(entry => entry.isDirectory())
+        .sort((left, right) => left.name.localeCompare(right.name));
     for (const entry of entries) {
         if (!fs.existsSync(path.join(suitesRoot, entry.name, 'suite.json'))) continue;
         try {

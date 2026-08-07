@@ -5,7 +5,7 @@ const Session = require('../../session');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
-const INHERITED_RUNTIME_SERVICES = Object.freeze([
+const FORWARDED_CAPABILITIES = Object.freeze([
     'workspace',
     'fileSystem',
     'commandScope',
@@ -13,15 +13,19 @@ const INHERITED_RUNTIME_SERVICES = Object.freeze([
     'sandboxScope',
 ]);
 
-function inheritRuntimeServices(context, ownServices = {}) {
-    const services = { ...ownServices };
-    for (const name of INHERITED_RUNTIME_SERVICES) {
-        const service = context && typeof context.getService === 'function'
-            ? context.getService(name)
-            : null;
-        if (service) services[name] = service;
+const capabilities = {
+    required: ['workspace', 'fileSystem', 'commandScope'],
+    optional: ['memoryScope', 'sandboxScope'],
+};
+
+function createSubagentCapabilities(parentCapabilities, ownCapabilities = {}) {
+    const selected = { ...ownCapabilities };
+    for (const name of FORWARDED_CAPABILITIES) {
+        if (parentCapabilities && parentCapabilities[name] != null) {
+            selected[name] = parentCapabilities[name];
+        }
     }
-    return services;
+    return Object.freeze(selected);
 }
 
 const definition = {
@@ -47,7 +51,7 @@ const definition = {
     },
 };
 
-async function handler({ agent: agentName, task }, context) {
+async function handler({ agent: agentName, task }, context, injectedCapabilities) {
     const agentConfig = agents.get(agentName);
     if (!agentConfig) return `未知 agent: ${agentName}`;
 
@@ -80,7 +84,7 @@ async function handler({ agent: agentName, task }, context) {
     const subClient = agentConfig.model ? providers.resolve(agentConfig.model) : providers.resolveDefault();
     // 模型能力转发：与主会话一致，给插件（如 auto-compaction 摘要）提供一次性补全；
     // 子 agent 用自己的 client（可与主 agent 不同），未注入则插件自动降级为不压缩。
-    const subModelService = {
+    const subModelCapability = {
         async complete(messages, options = {}) {
             let text = '';
             for await (const event of subClient.chat(messages, options)) {
@@ -91,20 +95,22 @@ async function handler({ agent: agentName, task }, context) {
             return text;
         },
     };
-    // 子 agent 继承主运行时已经收窄的 Workspace 能力；output/model 保持子会话独立。
-    const subServices = inheritRuntimeServices(context, {
+    // 子 agent 只转交 delegate_agent 显式声明收到的能力；output/model 保持子会话独立。
+    const subCapabilities = createSubagentCapabilities(injectedCapabilities, {
         output: subOutput,
-        model: subModelService,
+        model: subModelCapability,
     });
-    const subPlugins = createDefaultRegistry({ services: subServices });
-    const subToolRegistry = tools.createRegistry(subPlugins.getTools());
+    const subPlugins = createDefaultRegistry({ capabilities: subCapabilities });
+    const subToolRegistry = tools.createRegistry(
+        subPlugins.getTools(),
+        { capabilities: subCapabilities }
+    );
     const subContext = new Context(agentConfig.prompt, {
         sessionId: subSession.id,
         metadata: subSession.metadata,
         // 上下文窗口取自子 agent 实际所用的 client，与主 agent 完全隔离。
         maxContextTokens: subClient.maxContextTokens,
         resolveExtension: (name) => subPlugins.resolveApi(name),
-        resolveService: (name) => subServices[name] || null,
     });
     await subPlugins.init(subContext);
     subContext.addUser(task);
@@ -145,6 +151,7 @@ module.exports = {
     definition,
     handler,
     prompt,
-    INHERITED_RUNTIME_SERVICES,
-    inheritRuntimeServices,
+    capabilities,
+    FORWARDED_CAPABILITIES,
+    createSubagentCapabilities,
 };

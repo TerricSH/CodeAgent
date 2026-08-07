@@ -1,9 +1,7 @@
 const fs = require('fs');
 const path = require('path');
-const {
-    requireRuntimeService,
-    formatServiceError,
-} = require('../runtime-service');
+const { requireCapability } = require('../../runtime/capabilities');
+const { formatCapabilityError } = require('../capability-error');
 
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
 
@@ -23,17 +21,19 @@ const definition = {
     },
 };
 
-function handler({ path: filePath, content }, context) {
+const capabilities = { required: ['fileSystem'] };
+
+function handler({ path: filePath, content }, context, injectedCapabilities) {
     let fileSystem = null;
     try {
-        fileSystem = requireRuntimeService(context, 'fileSystem');
+        fileSystem = requireCapability(injectedCapabilities, 'fileSystem');
         const resolved = fileSystem.resolveForWrite(filePath);
         fs.mkdirSync(path.dirname(resolved), { recursive: true });
         fs.writeFileSync(resolved, content, 'utf-8');
         return `已写入: ${fileSystem.relative(resolved)}`;
     } catch (err) {
-        return formatServiceError(fileSystem, err, '写入失败');
+        return formatCapabilityError(fileSystem, err, '写入失败');
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, capabilities };

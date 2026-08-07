@@ -1,7 +1,7 @@
 const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { requireRuntimeService } = require('../runtime-service');
+const { requireCapability } = require('../../runtime/capabilities');
 
 const DEFAULT_TIMEOUT = 30000;
 const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
@@ -22,9 +22,11 @@ const definition = {
     },
 };
 
-function handler({ command, timeout }, context) {
+const capabilities = { required: ['commandScope'] };
+
+function handler({ command, timeout }, context, injectedCapabilities) {
     try {
-        const commandScope = requireRuntimeService(context, 'commandScope');
+        const commandScope = requireCapability(injectedCapabilities, 'commandScope');
         return execSync(command, {
             cwd: commandScope.cwd,
             encoding: 'utf-8',
@@ -36,4 +38,4 @@ function handler({ command, timeout }, context) {
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, capabilities };

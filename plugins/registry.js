@@ -4,13 +4,15 @@
 const NAMESPACE_SEPARATOR = '__';
 const PluginError = require('./plugin-error');
 const { validatePlugin } = require('./define-plugin');
+const { selectCapabilities } = require('../runtime/capabilities');
 
 class PluginRegistry {
     constructor(options = {}) {
         this.entries = [];
         this.storeFactory = typeof options.storeFactory === 'function' ? options.storeFactory : null;
-        // 宿主注入的通用能力（如 output 交互层）；不针对任何具体插件，所有插件 init 时均可取用。
-        this.services = options.services && typeof options.services === 'object' ? options.services : {};
+        this._availableCapabilities = options.capabilities && typeof options.capabilities === 'object'
+            ? options.capabilities
+            : {};
         if (Array.isArray(options.plugins)) {
             for (const plugin of options.plugins) {
                 this.register(plugin);
@@ -29,7 +31,12 @@ class PluginRegistry {
             throw new Error(`Duplicate plugin registration: ${plugin.name}`);
         }
 
-        this.entries.push({ plugin, config, owner: plugin.name, extension: null });
+        const capabilities = selectCapabilities(
+            this._availableCapabilities,
+            plugin.capabilities,
+            `Plugin "${plugin.name}"`
+        );
+        this.entries.push({ plugin, config, owner: plugin.name, capabilities, extension: null });
         return plugin;
     }
 
@@ -52,7 +59,7 @@ class PluginRegistry {
                 entry,
                 'init',
                 entry.plugin.init,
-                [context, { store, config: entry.config, services: this.services }]
+                [context, { store, config: entry.config, capabilities: entry.capabilities }]
             );
             entry.extension = extension || null;
 

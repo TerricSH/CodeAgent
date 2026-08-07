@@ -53,7 +53,7 @@ class WorkspaceManager {
         });
     }
 
-    createRuntimeServices(options = {}) {
+    createRuntimeCapabilities(options = {}) {
         const workspace = this._workspace;
         const version = this._version;
         const access = new WorkspaceAccess(workspace, { askUser: options.askUser });
