@@ -30,10 +30,10 @@ async function main() {
     let closed = false;
     rl.on('close', async () => {
         closed = true;
-        const sessionId = runtime.persist({ closing: true });
-        console.log(`对话已保存到 SQLite, sessionId: ${sessionId}`);
+        const sessionId = await runtime.persist({ closing: true });
+        console.log(`对话已保存到 PostgreSQL, sessionId: ${sessionId}`);
         await runtime.dispose('close');
-        Session.close();
+        await Session.close();
     });
 
     // 切换只在空闲安全点执行：persist-before + 重建替换，绝不在流式/工具/ask-user 中途。
@@ -69,7 +69,7 @@ async function main() {
             }
 
             runtime.context.addUser(text);
-            runtime.persist();
+            await runtime.persist();
 
             try {
                 await runAgentLoop(runtime.context, output, {
@@ -78,9 +78,9 @@ async function main() {
                     persist: () => runtime.persist(),
                     client: modelRuntime,
                 });
-                runtime.persist();
+                await runtime.persist();
             } catch (err) {
-                runtime.persist();
+                await runtime.persist();
                 output.error.render(err.message);
             }
 
@@ -93,8 +93,8 @@ async function main() {
     ask();
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
     console.error(err.message);
-    Session.close();
+    await Session.close().catch(() => {});
     process.exitCode = 1;
 });

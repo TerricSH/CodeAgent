@@ -6,49 +6,54 @@ class Session {
         this.id = options.id || globalThis.crypto?.randomUUID?.() || Date.now().toString(36);
         this.startTime = options.startTime || new Date().toISOString();
         this.metadata = options.metadata || null;
+        this.persistedMessageCount = Number.isInteger(options.persistedMessageCount)
+            ? Math.max(options.persistedMessageCount, 0)
+            : 0;
     }
 
-    save(options = {}) {
+    async save(options = {}) {
         const endTime = Object.prototype.hasOwnProperty.call(options, 'endTime')
             ? options.endTime
             : new Date().toISOString();
         const messages = Array.isArray(options.messages) ? options.messages : [];
         const metadata = options.metadata !== undefined ? options.metadata : this.metadata;
 
-        sessionRepository.saveSession({
+        await sessionRepository.saveSession({
             id: this.id,
             startTime: this.startTime,
             endTime,
             metadata,
             messages,
+            fromMessageIndex: this.persistedMessageCount,
             persist: options.persist,
         });
 
+        this.persistedMessageCount = messages.length;
         return this.id;
     }
 
-    static list() {
+    static async list() {
         return sessionRepository.listSessions();
     }
 
-    static load(id) {
+    static async load(id) {
         return sessionRepository.loadSession(id);
     }
 
-    static messages(id, options = {}) {
+    static async messages(id, options = {}) {
         return sessionRepository.getSessionMessages(id, options);
     }
 
-    static query(id, options = {}) {
+    static async query(id, options = {}) {
         return sessionRepository.queryMessages(id, options);
     }
 
-    static count(id) {
+    static async count(id) {
         return sessionRepository.countMessages(id);
     }
 
-    static close() {
-        sessionRepository.close();
+    static async close() {
+        await sessionRepository.close();
     }
 }
 

@@ -28,9 +28,9 @@ const taskLedgerPlugin = definePlugin({
             isDirty: () => dirty,
 
             // 恢复：缺失 → 空状态；版本不符/损坏 → 降级保持空，不抛错。
-            hydrate: (sessionId) => {
+            hydrate: async (sessionId) => {
                 if (!store || !sessionId) return;
-                const raw = store.read(sessionId);
+                const raw = await store.read(sessionId);
                 if (!raw) return;
 
                 const envelope = JSON.parse(raw);
@@ -43,10 +43,10 @@ const taskLedgerPlugin = definePlugin({
             },
 
             // 持久化：同步写入版本信封；由宿主在事务内调用，保证原子。
-            persist: (sessionId) => {
+            persist: async (sessionId, options = {}) => {
                 if (!store || !sessionId) return;
                 const envelope = JSON.stringify({ name: NAME, version: VERSION, data: ledger.list() });
-                store.write(sessionId, envelope);
+                await store.write(sessionId, envelope, options);
                 dirty = false;
             },
         };

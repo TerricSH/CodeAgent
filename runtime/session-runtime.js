@@ -30,6 +30,7 @@ class SessionRuntime {
         this.plugins = null;
         this.toolRegistry = null;
         this._savedFingerprint = null;
+        this._persistQueue = Promise.resolve();
         this._pending = null; // { type:'new' } | { type:'switch', id }
     }
 
@@ -103,15 +104,21 @@ class SessionRuntime {
         });
     }
 
-    persist({ force = false, closing = false } = {}) {
+    persist(options = {}) {
+        const task = () => this._persistNow(options);
+        this._persistQueue = this._persistQueue.then(task, task);
+        return this._persistQueue;
+    }
+
+    async _persistNow({ force = false, closing = false } = {}) {
         const fp = this._fingerprint();
         const dirty = force || closing || fp !== this._savedFingerprint || this.plugins.isDirty();
         if (!dirty) return this.session.id;
-        const id = this.session.save({
+        const id = await this.session.save({
             messages: this.context.snapshotMessages(),
             metadata: this.context.metadata,
             endTime: closing ? new Date().toISOString() : null,
-            persist: () => this.plugins.persistAll(this.session.id),
+            persist: (client) => this.plugins.persistAll(this.session.id, { client }),
         });
         this._savedFingerprint = fp;
         return id;
@@ -134,7 +141,7 @@ class SessionRuntime {
         if (!pending) return null;
 
         try {
-            this.persist({ force: true });
+            await this.persist({ force: true });
 
             if (pending.type === 'workspace') {
                 return await this._switchWorkspace(pending.workspace);
@@ -145,10 +152,15 @@ class SessionRuntime {
                 await this._build(new Session(), null);
                 return { type: 'new', id: this.session.id };
             }
-            const loaded = Session.load(pending.id);
+            const loaded = await Session.load(pending.id);
             if (!loaded) return { type: 'error', id: pending.id, reason: 'not_found' };
             await this.plugins.dispose(this.context, { reason: 'session-switch' });
-            const sess = new Session({ id: loaded.id, startTime: loaded.startTime, metadata: loaded.metadata });
+            const sess = new Session({
+                id: loaded.id,
+                startTime: loaded.startTime,
+                metadata: loaded.metadata,
+                persistedMessageCount: loaded.messages.length,
+            });
             await this._build(sess, loaded);
             return { type: 'switch', id: this.session.id, messageCount: loaded.messages.length };
         } catch (err) {
@@ -176,6 +188,7 @@ class SessionRuntime {
             startTime: this.session.startTime,
             metadata: { ...(this.context.metadata || {}) },
             messages: this.context.snapshotMessages(),
+            persistedMessageCount: this.session.persistedMessageCount,
         };
         let rebuilding = false;
         let newBuildReady = false;
@@ -188,10 +201,11 @@ class SessionRuntime {
                 id: retained.id,
                 startTime: retained.startTime,
                 metadata: retained.metadata,
+                persistedMessageCount: retained.persistedMessageCount,
             });
             await this._build(session, retained, { hydrate: false, resume: false });
             newBuildReady = true;
-            this.persist({ force: true });
+            await this.persist({ force: true });
             return { type: 'workspace-switch', changed: true, ...this.workspaceManager.status() };
         } catch (error) {
             let failure = error;
@@ -211,6 +225,7 @@ class SessionRuntime {
                         id: retained.id,
                         startTime: retained.startTime,
                         metadata: retained.metadata,
+                        persistedMessageCount: retained.persistedMessageCount,
                     });
                     await this._build(session, retained, { hydrate: true, resume: false });
                 } catch (rollbackError) {
@@ -237,9 +252,9 @@ class SessionRuntime {
         return this.workspaceManager.status();
     }
 
-    list() { return Session.list(); }
+    async list() { return Session.list(); }
 
-    query(options = {}) {
+    async query(options = {}) {
         const id = options.id || this.session.id;
         const isCurrent = id === this.session.id;
         const source = options.source || (isCurrent ? 'memory' : 'store');

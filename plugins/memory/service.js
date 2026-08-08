@@ -114,7 +114,7 @@ class MemoryService {
         this.dirty = true;
     }
 
-    prepareOverlays() {
+    async prepareOverlays() {
         if (this.disposed) return;
         if (this.resumed && this.focus) {
             const content = renderResumeSystem({
@@ -134,7 +134,7 @@ class MemoryService {
         const user = latestMessage(this.context.messages, 'user');
         const query = user && typeof user.content === 'string' ? user.content : '';
         if (!query.trim()) return;
-        const recalled = this.repository.searchMemories(this.ownerFilters('all'), {
+        const recalled = await this.repository.searchMemories(this.ownerFilters('all'), {
             query,
             limit: this.config.autoRecallLimit || 5,
         });
@@ -158,7 +158,7 @@ class MemoryService {
         });
     }
 
-    searchSessions(options = {}) {
+    async searchSessions(options = {}) {
         if ((options.scope || 'current') === 'current') {
             return searchArrays([{
                 info: { id: this.context.sessionId, metadata: this.context.metadata },
@@ -168,7 +168,7 @@ class MemoryService {
         return this.repository.searchSessions(this.context.sessionId, options);
     }
 
-    readSessionRange(options = {}) {
+    async readSessionRange(options = {}) {
         const sessionId = options.sessionId || this.context.sessionId;
         const start = Math.max(Number(options.start) || 0, 0);
         const end = Math.min(Math.max(Number(options.end) || start + 20, start), start + 100);
@@ -184,7 +184,7 @@ class MemoryService {
         return this.repository.readRange(sessionId, start, end);
     }
 
-    remember(options = {}) {
+    async remember(options = {}) {
         const scope = ['session', 'project', 'user'].includes(options.scope) ? options.scope : 'project';
         if (this.context.metadata && this.context.metadata.type === 'subagent' && scope !== 'session') {
             throw new Error('Subagents may only write session-scoped memory; return project memory candidates to the parent agent');
@@ -208,14 +208,14 @@ class MemoryService {
         });
     }
 
-    searchMemories(options = {}) {
+    async searchMemories(options = {}) {
         const scope = ['session', 'project', 'user', 'all'].includes(options.scope)
             ? options.scope
             : 'all';
         return this.repository.searchMemories(this.ownerFilters(scope), options);
     }
 
-    forget(options = {}) {
+    async forget(options = {}) {
         if (!options.id) throw new Error('Memory id is required');
         return this.repository.forget(String(options.id), this.ownerFilters('all'));
     }

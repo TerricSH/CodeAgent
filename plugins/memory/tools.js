@@ -37,7 +37,7 @@ const sessionSearch = {
             },
         },
     },
-    handler(args, context, memory) {
+    async handler(args, context, memory) {
         if (!memory) throw new Error('Memory extension is unavailable');
         return memory.searchSessions(args || {});
     },
@@ -60,7 +60,7 @@ const sessionReadRange = {
             },
         },
     },
-    handler(args, context, memory) {
+    async handler(args, context, memory) {
         if (!memory) throw new Error('Memory extension is unavailable');
         return memory.readSessionRange(args || {});
     },
@@ -84,7 +84,7 @@ const memorySearch = {
             },
         },
     },
-    handler(args, context, memory) {
+    async handler(args, context, memory) {
         if (!memory) throw new Error('Memory extension is unavailable');
         return memory.searchMemories(args || {});
     },
@@ -112,9 +112,9 @@ const memoryRemember = {
             },
         },
     },
-    handler(args, context, memory) {
+    async handler(args, context, memory) {
         if (!memory) throw new Error('Memory extension is unavailable');
-        return { id: memory.remember(args || {}) };
+        return { id: await memory.remember(args || {}) };
     },
 };
 
@@ -131,9 +131,9 @@ const memoryForget = {
             },
         },
     },
-    handler(args, context, memory) {
+    async handler(args, context, memory) {
         if (!memory) throw new Error('Memory extension is unavailable');
-        return { forgotten: memory.forget(args || {}) };
+        return { forgotten: await memory.forget(args || {}) };
     },
 };
 

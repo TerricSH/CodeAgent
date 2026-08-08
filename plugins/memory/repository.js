@@ -1,8 +1,17 @@
-const { getDb } = require('../../data-layer/sqlite/db');
+const {
+    ensureRuntimeDatabase,
+    withRuntimeTransaction,
+} = require('../../data-layer/postgres/runtime-db');
 
 function parseJson(value, fallback = null) {
-    if (!value) return fallback;
+    if (value == null) return fallback;
+    if (typeof value === 'object') return value;
     try { return JSON.parse(value); } catch { return fallback; }
+}
+
+function toIso(value) {
+    if (!value) return null;
+    return value instanceof Date ? value.toISOString() : String(value);
 }
 
 function clip(value, max = 2000) {
@@ -48,7 +57,7 @@ function searchArrays(sessions, options = {}) {
                 session: session.info,
                 messageIndex: message.message_index != null ? message.message_index : index,
                 role: message.role,
-                timestamp: message.created_at || message.timestamp || null,
+                timestamp: toIso(message.created_at || message.timestamp),
                 content: clip(message.content),
                 context: messages.slice(Math.max(0, index - around), index + around + 1).map((item, offset) => ({
                     messageIndex: item.message_index != null
@@ -66,51 +75,38 @@ function searchArrays(sessions, options = {}) {
     return { query: options.query || null, keywords: terms, count: hits.length, hits };
 }
 
+function mapMessage(row) {
+    return {
+        ...row,
+        message_index: Number(row.message_index),
+        timestamp: toIso(row.timestamp),
+        created_at: toIso(row.created_at),
+        finished_at: toIso(row.finished_at),
+        tool_calls: parseJson(row.tool_calls, null),
+        metadata: parseJson(row.metadata, null),
+    };
+}
+
 class MemoryRepository {
-    constructor() {
-        this.db = getDb();
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS memories (
-                id TEXT PRIMARY KEY,
-                scope TEXT NOT NULL,
-                owner_key TEXT NOT NULL,
-                type TEXT NOT NULL,
-                subject TEXT,
-                content TEXT NOT NULL,
-                importance REAL NOT NULL DEFAULT 0.5,
-                confidence REAL NOT NULL DEFAULT 1.0,
-                status TEXT NOT NULL DEFAULT 'active',
-                source_session_id TEXT,
-                source_message_indexes TEXT,
-                supersedes TEXT,
-                tags TEXT,
-                metadata TEXT,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                last_accessed_at TEXT,
-                access_count INTEGER NOT NULL DEFAULT 0
-            );
-            CREATE INDEX IF NOT EXISTS idx_memories_owner_status
-                ON memories(scope, owner_key, status);
-            CREATE INDEX IF NOT EXISTS idx_memories_subject
-                ON memories(scope, owner_key, subject);
+    async sessionRows() {
+        const { pool, sql: schema } = await ensureRuntimeDatabase();
+        const result = await pool.query(`
+            SELECT id, start_time, end_time, metadata
+            FROM ${schema}.sessions
+            ORDER BY start_time DESC
         `);
+        return result.rows.map((row) => ({
+            id: row.id,
+            startTime: toIso(row.start_time),
+            endTime: toIso(row.end_time),
+            metadata: parseJson(row.metadata, {}),
+        }));
     }
 
-    sessionRows() {
-        return this.db.prepare('SELECT id, start_time, end_time, metadata FROM sessions ORDER BY start_time DESC').all()
-            .map((row) => ({
-                id: row.id,
-                startTime: row.start_time,
-                endTime: row.end_time,
-                metadata: parseJson(row.metadata, {}),
-            }));
-    }
-
-    resolveSessionIds(currentSessionId, scope = 'current', specificSessionId = null) {
+    async resolveSessionIds(currentSessionId, scope = 'current', specificSessionId = null) {
         if (scope === 'specific') return specificSessionId ? [specificSessionId] : [];
         if (scope === 'current') return currentSessionId ? [currentSessionId] : [];
-        const rows = this.sessionRows();
+        const rows = await this.sessionRows();
         const children = new Map();
         for (const row of rows) {
             const parent = row.metadata && row.metadata.parentSessionId;
@@ -135,128 +131,172 @@ class MemoryRepository {
             : descendants;
     }
 
-    loadSessions(ids) {
+    async loadSessions(ids) {
         if (!ids || ids.length === 0) return [];
-        const placeholders = ids.map(() => '?').join(', ');
-        const sessionRows = this.db.prepare(
-            `SELECT id, start_time, end_time, metadata FROM sessions WHERE id IN (${placeholders})`
-        ).all(...ids);
-        const messageStmt = this.db.prepare(`
-            SELECT role, content, timestamp, created_at, finished_at, message_index,
+        const { pool, sql: schema } = await ensureRuntimeDatabase();
+        const sessionResult = await pool.query(`
+            SELECT id, start_time, end_time, metadata
+            FROM ${schema}.sessions
+            WHERE id = ANY($1::text[])
+        `, [ids]);
+        const messageResult = await pool.query(`
+            SELECT session_id, role, content, timestamp, created_at, finished_at, message_index,
                    tool_call_id, tool_calls, metadata
-            FROM messages WHERE session_id = ? ORDER BY message_index
-        `);
-        return sessionRows.map((row) => ({
-            info: {
-                id: row.id,
-                startTime: row.start_time,
-                endTime: row.end_time,
-                metadata: parseJson(row.metadata, {}),
-            },
-            messages: messageStmt.all(row.id).map((message) => ({
-                ...message,
-                tool_calls: parseJson(message.tool_calls, null),
-                metadata: parseJson(message.metadata, null),
-            })),
-        }));
+            FROM ${schema}.messages
+            WHERE session_id = ANY($1::text[])
+            ORDER BY session_id, message_index
+        `, [ids]);
+        const messagesBySession = new Map();
+        for (const row of messageResult.rows) {
+            if (!messagesBySession.has(row.session_id)) messagesBySession.set(row.session_id, []);
+            messagesBySession.get(row.session_id).push(mapMessage(row));
+        }
+        const rowsById = new Map(sessionResult.rows.map(row => [row.id, row]));
+        return ids.filter(id => rowsById.has(id)).map((id) => {
+            const row = rowsById.get(id);
+            return {
+                info: {
+                    id: row.id,
+                    startTime: toIso(row.start_time),
+                    endTime: toIso(row.end_time),
+                    metadata: parseJson(row.metadata, {}),
+                },
+                messages: messagesBySession.get(id) || [],
+            };
+        });
     }
 
-    searchSessions(currentSessionId, options = {}) {
-        const ids = this.resolveSessionIds(currentSessionId, options.scope, options.sessionId);
-        return searchArrays(this.loadSessions(ids), options);
+    async searchSessions(currentSessionId, options = {}) {
+        const ids = await this.resolveSessionIds(currentSessionId, options.scope, options.sessionId);
+        return searchArrays(await this.loadSessions(ids), options);
     }
 
-    readRange(sessionId, start = 0, end = 20) {
+    async readRange(sessionId, start = 0, end = 20) {
         const from = Math.max(Number(start) || 0, 0);
         const to = Math.max(Number(end) || from + 20, from);
-        return this.db.prepare(`
+        const { pool, sql: schema } = await ensureRuntimeDatabase();
+        const result = await pool.query(`
             SELECT role, content, timestamp, created_at, finished_at, message_index,
                    tool_call_id, tool_calls, metadata
-            FROM messages
-            WHERE session_id = ? AND message_index >= ? AND message_index <= ?
+            FROM ${schema}.messages
+            WHERE session_id = $1 AND message_index >= $2 AND message_index <= $3
             ORDER BY message_index
-        `).all(sessionId, from, to).map((row) => ({
-            ...row,
-            tool_calls: parseJson(row.tool_calls, null),
-            metadata: parseJson(row.metadata, null),
+        `, [sessionId, from, to]);
+        return result.rows.map((row) => ({
+            ...mapMessage(row),
             content: clip(row.content, 4000),
         }));
     }
 
-    remember(record) {
-        const now = new Date().toISOString();
-        const id = globalThis.crypto.randomUUID();
-        let supersedes = null;
-        if (record.subject) {
-            const previous = this.db.prepare(`
-                SELECT id, content FROM memories
-                WHERE scope = ? AND owner_key = ? AND subject = ? AND status = 'active'
-                ORDER BY updated_at DESC LIMIT 1
-            `).get(record.scope, record.ownerKey, record.subject);
-            if (previous && previous.content === record.content) return previous.id;
-            if (previous) {
-                supersedes = previous.id;
-                this.db.prepare("UPDATE memories SET status = 'superseded', updated_at = ? WHERE id = ?")
-                    .run(now, previous.id);
+    async remember(record) {
+        return withRuntimeTransaction(async (client, { sql: schema }) => {
+            const now = new Date().toISOString();
+            const id = globalThis.crypto.randomUUID();
+            let supersedes = null;
+            if (record.subject) {
+                await client.query(
+                    'SELECT pg_advisory_xact_lock(hashtext($1))',
+                    [`codeagent-memory:${record.scope}:${record.ownerKey}:${record.subject}`]
+                );
+                const previousResult = await client.query(`
+                    SELECT id, content FROM ${schema}.memories
+                    WHERE scope = $1 AND owner_key = $2 AND subject = $3 AND status = 'active'
+                    ORDER BY updated_at DESC LIMIT 1
+                    FOR UPDATE
+                `, [record.scope, record.ownerKey, record.subject]);
+                const previous = previousResult.rows[0];
+                if (previous && previous.content === record.content) return previous.id;
+                if (previous) {
+                    supersedes = previous.id;
+                    await client.query(`
+                        UPDATE ${schema}.memories
+                        SET status = 'superseded', updated_at = $1
+                        WHERE id = $2
+                    `, [now, previous.id]);
+                }
             }
-        }
-        this.db.prepare(`
-            INSERT INTO memories (
-                id, scope, owner_key, type, subject, content, importance, confidence,
-                status, source_session_id, source_message_indexes, supersedes, tags,
-                metadata, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?)
-        `).run(
-            id, record.scope, record.ownerKey, record.type, record.subject || null,
-            record.content, record.importance, record.confidence,
-            record.sourceSessionId || null, JSON.stringify(record.sourceMessageIndexes || []),
-            supersedes, JSON.stringify(record.tags || []), JSON.stringify(record.metadata || {}),
-            now, now
-        );
-        return id;
+            await client.query(`
+                INSERT INTO ${schema}.memories (
+                    id, scope, owner_key, type, subject, content, importance, confidence,
+                    status, source_session_id, source_message_indexes, supersedes, tags,
+                    metadata, created_at, updated_at
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, 'active', $9, $10::jsonb,
+                    $11, $12::jsonb, $13::jsonb, $14, $14
+                )
+            `, [
+                id,
+                record.scope,
+                record.ownerKey,
+                record.type,
+                record.subject || null,
+                record.content,
+                record.importance,
+                record.confidence,
+                record.sourceSessionId || null,
+                JSON.stringify(record.sourceMessageIndexes || []),
+                supersedes,
+                JSON.stringify(record.tags || []),
+                JSON.stringify(record.metadata || {}),
+                now,
+            ]);
+            return id;
+        });
     }
 
-    searchMemories(ownerFilters, options = {}) {
+    async searchMemories(ownerFilters, options = {}) {
         const terms = normalizeTerms(options.query, options.keywords);
+        const { pool, sql: schema } = await ensureRuntimeDatabase();
         const rows = [];
         for (const filter of ownerFilters) {
-            rows.push(...this.db.prepare(`
-                SELECT * FROM memories
-                WHERE scope = ? AND owner_key = ? AND status = 'active'
+            const result = await pool.query(`
+                SELECT * FROM ${schema}.memories
+                WHERE scope = $1 AND owner_key = $2 AND status = 'active'
                 ORDER BY importance DESC, updated_at DESC
-            `).all(filter.scope, filter.ownerKey));
+            `, [filter.scope, filter.ownerKey]);
+            rows.push(...result.rows);
         }
         const limit = Math.min(Math.max(Number(options.limit) || 5, 1), 20);
         const matched = rows.filter((row) => {
             if (terms.length === 0) return true;
-            return matches(`${row.subject || ''}\n${row.content}\n${row.tags || ''}`, terms, 'any');
+            return matches(`${row.subject || ''}\n${row.content}\n${JSON.stringify(row.tags || [])}`, terms, 'any');
         }).slice(0, limit);
-        const now = new Date().toISOString();
-        const touch = this.db.prepare(`
-            UPDATE memories SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?
-        `);
-        for (const row of matched) touch.run(now, row.id);
+        if (matched.length > 0) {
+            await pool.query(`
+                UPDATE ${schema}.memories
+                SET access_count = access_count + 1, last_accessed_at = $1
+                WHERE id = ANY($2::text[])
+            `, [new Date().toISOString(), matched.map((row) => row.id)]);
+        }
         return matched.map((row) => ({
             id: row.id,
             scope: row.scope,
             type: row.type,
             subject: row.subject,
             content: row.content,
-            importance: row.importance,
-            confidence: row.confidence,
+            importance: Number(row.importance),
+            confidence: Number(row.confidence),
             sourceSessionId: row.source_session_id,
             tags: parseJson(row.tags, []),
-            updatedAt: row.updated_at,
+            updatedAt: toIso(row.updated_at),
         }));
     }
 
-    forget(id, ownerFilters) {
-        const allowed = new Set(ownerFilters.map((item) => `${item.scope}:${item.ownerKey}`));
-        const row = this.db.prepare('SELECT scope, owner_key FROM memories WHERE id = ?').get(id);
-        if (!row || !allowed.has(`${row.scope}:${row.owner_key}`)) return false;
-        this.db.prepare("UPDATE memories SET status = 'forgotten', updated_at = ? WHERE id = ?")
-            .run(new Date().toISOString(), id);
-        return true;
+    async forget(id, ownerFilters) {
+        const allowed = ownerFilters.map((item) => [item.scope, item.ownerKey]);
+        if (allowed.length === 0) return false;
+        const { pool, sql: schema } = await ensureRuntimeDatabase();
+        const params = [id, new Date().toISOString()];
+        const clauses = allowed.map(([scope, ownerKey]) => {
+            params.push(scope, ownerKey);
+            return `(scope = $${params.length - 1} AND owner_key = $${params.length})`;
+        });
+        const result = await pool.query(`
+            UPDATE ${schema}.memories
+            SET status = 'forgotten', updated_at = $2
+            WHERE id = $1 AND (${clauses.join(' OR ')})
+        `, params);
+        return result.rowCount > 0;
     }
 }
 

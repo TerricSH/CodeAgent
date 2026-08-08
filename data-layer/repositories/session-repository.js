@@ -1,150 +1,202 @@
-const { getDb, closeDb } = require('../sqlite/db');
+const {
+    ensureRuntimeDatabase,
+    withRuntimeTransaction,
+    closeRuntimeDatabase,
+} = require('../postgres/runtime-db');
 
 function serialize(value) {
     return value == null ? null : JSON.stringify(value);
 }
 
-function parseJson(value) {
+function normalizeJson(value) {
+    if (value == null || typeof value === 'object') return value;
+    try { return JSON.parse(value); } catch { return null; }
+}
+
+function toIso(value) {
     if (!value) return null;
-    try {
-        return JSON.parse(value);
-    } catch {
-        return null;
-    }
+    return value instanceof Date ? value.toISOString() : String(value);
 }
 
-function saveSession(sessionData) {
-    const db = getDb();
-
-    const insertSession = db.prepare(`
-        INSERT OR REPLACE INTO sessions (id, start_time, end_time, metadata)
-        VALUES (?, ?, ?, ?)
-    `);
-    const deleteMessages = db.prepare('DELETE FROM messages WHERE session_id = ?');
-    const insertMessage = db.prepare(`
-        INSERT INTO messages (session_id, role, content, timestamp, created_at, finished_at, message_index, tool_call_id, tool_calls, metadata)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-
-    const transaction = db.transaction(() => {
-        insertSession.run(
-            sessionData.id,
-            sessionData.startTime,
-            sessionData.endTime,
-            serialize(sessionData.metadata)
-        );
-        deleteMessages.run(sessionData.id);
-
-        sessionData.messages.forEach((msg, idx) => {
-            const createdAt = msg.created_at || msg.timestamp || new Date().toISOString();
-            insertMessage.run(
-                sessionData.id,
-                msg.role,
-                msg.content == null ? null : String(msg.content),
-                msg.timestamp || createdAt,
-                createdAt,
-                msg.finished_at || null,
-                idx,
-                msg.tool_call_id || null,
-                serialize(msg.tool_calls),
-                serialize(msg.metadata)
-            );
-        });
-
-        // 原子持久化：扩展状态在同一事务内落库，与消息一起提交或一起回滚，杜绝半存。
-        if (typeof sessionData.persist === 'function') {
-            sessionData.persist();
-        }
-    });
-
-    transaction();
-}
-
-function listSessions() {
-    const db = getDb();
-    return db.prepare('SELECT id, start_time, end_time, metadata FROM sessions ORDER BY start_time DESC').all()
-        .map((row) => ({
-            id: row.id,
-            startTime: row.start_time,
-            endTime: row.end_time,
-            metadata: parseJson(row.metadata),
-        }));
-}
-
-function loadSession(id) {
-    const db = getDb();
-    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
-    if (!session) return null;
-
-    const messages = db.prepare(
-        'SELECT role, content, timestamp, created_at, finished_at, tool_call_id, tool_calls, metadata FROM messages WHERE session_id = ? ORDER BY message_index'
-    ).all(id).map((row) => ({
-        role: row.role,
-        content: row.content,
-        timestamp: row.timestamp,
-        created_at: row.created_at,
-        finished_at: row.finished_at,
-        tool_call_id: row.tool_call_id,
-        tool_calls: parseJson(row.tool_calls),
-        metadata: parseJson(row.metadata),
-    }));
-
+function mapSession(row) {
     return {
-        id: session.id,
-        startTime: session.start_time,
-        endTime: session.end_time,
-        metadata: parseJson(session.metadata),
-        messages,
+        id: row.id,
+        startTime: toIso(row.start_time),
+        endTime: toIso(row.end_time),
+        metadata: normalizeJson(row.metadata),
     };
 }
 
-function close() {
-    closeDb();
+function mapMessage(row) {
+    return {
+        role: row.role,
+        content: row.content,
+        timestamp: toIso(row.timestamp),
+        created_at: toIso(row.created_at),
+        finished_at: toIso(row.finished_at),
+        tool_call_id: row.tool_call_id,
+        tool_calls: normalizeJson(row.tool_calls),
+        metadata: normalizeJson(row.metadata),
+        ...(row.message_index == null ? {} : { message_index: Number(row.message_index) }),
+    };
+}
+
+async function saveSession(sessionData) {
+    return withRuntimeTransaction(async (client, { sql: schema }) => {
+        await client.query(
+            'SELECT pg_advisory_xact_lock(hashtext($1))',
+            [`codeagent-runtime-session:${sessionData.id}`]
+        );
+        await client.query(`
+            INSERT INTO ${schema}.sessions (id, start_time, end_time, metadata)
+            VALUES ($1, $2, $3, $4::jsonb)
+            ON CONFLICT (id) DO UPDATE SET
+                start_time = excluded.start_time,
+                end_time = excluded.end_time,
+                metadata = excluded.metadata
+        `, [
+            sessionData.id,
+            sessionData.startTime,
+            sessionData.endTime,
+            serialize(sessionData.metadata),
+        ]);
+
+        const fromMessageIndex = Number.isInteger(sessionData.fromMessageIndex)
+            ? Math.min(Math.max(sessionData.fromMessageIndex, 0), sessionData.messages.length)
+            : 0;
+        for (let index = fromMessageIndex; index < sessionData.messages.length; index += 1) {
+            const message = sessionData.messages[index];
+            const createdAt = message.created_at || message.timestamp || new Date().toISOString();
+            await client.query(`
+                INSERT INTO ${schema}.messages (
+                    session_id, role, content, timestamp, created_at, finished_at,
+                    message_index, tool_call_id, tool_calls, metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
+                ON CONFLICT (session_id, message_index) DO UPDATE SET
+                    role = excluded.role,
+                    content = excluded.content,
+                    timestamp = excluded.timestamp,
+                    created_at = excluded.created_at,
+                    finished_at = excluded.finished_at,
+                    tool_call_id = excluded.tool_call_id,
+                    tool_calls = excluded.tool_calls,
+                    metadata = excluded.metadata
+            `, [
+                sessionData.id,
+                message.role,
+                message.content == null ? null : String(message.content),
+                message.timestamp || createdAt,
+                createdAt,
+                message.finished_at || null,
+                index,
+                message.tool_call_id || null,
+                serialize(message.tool_calls),
+                serialize(message.metadata),
+            ]);
+        }
+
+        await client.query(
+            `DELETE FROM ${schema}.messages WHERE session_id = $1 AND message_index >= $2`,
+            [sessionData.id, sessionData.messages.length]
+        );
+
+        if (typeof sessionData.persist === 'function') {
+            await sessionData.persist(client);
+        }
+        return sessionData.id;
+    });
+}
+
+async function listSessions() {
+    const { pool, sql: schema } = await ensureRuntimeDatabase();
+    const result = await pool.query(`
+        SELECT id, start_time, end_time, metadata
+        FROM ${schema}.sessions
+        ORDER BY start_time DESC
+    `);
+    return result.rows.map(mapSession);
+}
+
+async function loadSession(id) {
+    const { pool, sql: schema } = await ensureRuntimeDatabase();
+    const sessionResult = await pool.query(
+        `SELECT * FROM ${schema}.sessions WHERE id = $1`,
+        [id]
+    );
+    if (!sessionResult.rows[0]) return null;
+    const messageResult = await pool.query(`
+        SELECT role, content, timestamp, created_at, finished_at,
+               tool_call_id, tool_calls, metadata
+        FROM ${schema}.messages
+        WHERE session_id = $1
+        ORDER BY message_index
+    `, [id]);
+    return {
+        ...mapSession(sessionResult.rows[0]),
+        messages: messageResult.rows.map(mapMessage),
+    };
 }
 
 const MAX_QUERY_LIMIT = 200;
 
-// 参数化只读查询：调用方决定 select/range/order/role/limit；宿主只守一条安全上限（保护同步主循环）。
-function queryMessages(id, options = {}) {
-    const db = getDb();
+async function queryMessages(id, options = {}) {
+    const { pool, sql: schema } = await ensureRuntimeDatabase();
     const select = options.select === 'meta' || options.select === 'preview' ? options.select : 'full';
     const order = options.order === 'desc' ? 'DESC' : 'ASC';
     const limit = Math.min(Math.max(1, Number(options.limit) || 50), MAX_QUERY_LIMIT);
-
-    const conds = ['session_id = ?'];
+    const conditions = ['session_id = $1'];
     const args = [id];
-    if (Number.isInteger(options.beforeIndex)) { conds.push('message_index < ?'); args.push(options.beforeIndex); }
-    if (Number.isInteger(options.afterIndex)) { conds.push('message_index > ?'); args.push(options.afterIndex); }
-    if (options.role) { conds.push('role = ?'); args.push(options.role); }
+    if (Number.isInteger(options.beforeIndex)) {
+        args.push(options.beforeIndex);
+        conditions.push(`message_index < $${args.length}`);
+    }
+    if (Number.isInteger(options.afterIndex)) {
+        args.push(options.afterIndex);
+        conditions.push(`message_index > $${args.length}`);
+    }
+    if (options.role) {
+        args.push(options.role);
+        conditions.push(`role = $${args.length}`);
+    }
+    args.push(limit);
 
-    const cols = select === 'meta'
+    const columns = select === 'meta'
         ? 'role, message_index, created_at, finished_at'
         : select === 'preview'
-            ? 'role, message_index, created_at, finished_at, substr(content, 1, 200) AS content'
+            ? 'role, message_index, created_at, finished_at, left(content, 200) AS content'
             : 'role, content, timestamp, created_at, finished_at, tool_call_id, tool_calls, metadata, message_index';
-
-    const rows = db.prepare(
-        `SELECT ${cols} FROM messages WHERE ${conds.join(' AND ')} ORDER BY message_index ${order} LIMIT ?`
-    ).all(...args, limit).map((row) => ({
-        role: row.role,
-        message_index: row.message_index,
-        created_at: row.created_at,
-        finished_at: row.finished_at,
-        ...(select !== 'meta' ? { content: row.content } : {}),
-        ...(select === 'full' ? {
-            timestamp: row.timestamp,
-            tool_call_id: row.tool_call_id,
-            tool_calls: parseJson(row.tool_calls),
-            metadata: parseJson(row.metadata),
-        } : {}),
-    }));
-
-    return { items: rows, cursor: rows.length ? rows[rows.length - 1].message_index : null, count: rows.length };
+    const result = await pool.query(`
+        SELECT ${columns}
+        FROM ${schema}.messages
+        WHERE ${conditions.join(' AND ')}
+        ORDER BY message_index ${order}
+        LIMIT $${args.length}
+    `, args);
+    const items = result.rows.map((row) => {
+        if (select === 'meta') {
+            return {
+                role: row.role,
+                message_index: Number(row.message_index),
+                created_at: toIso(row.created_at),
+                finished_at: toIso(row.finished_at),
+            };
+        }
+        return mapMessage(row);
+    });
+    return {
+        items,
+        cursor: items.length ? items[items.length - 1].message_index : null,
+        count: items.length,
+    };
 }
 
-function countMessages(id) {
-    const db = getDb();
-    return db.prepare('SELECT COUNT(*) AS n FROM messages WHERE session_id = ?').get(id).n;
+async function countMessages(id) {
+    const { pool, sql: schema } = await ensureRuntimeDatabase();
+    const result = await pool.query(
+        `SELECT COUNT(*)::integer AS count FROM ${schema}.messages WHERE session_id = $1`,
+        [id]
+    );
+    return Number(result.rows[0].count);
 }
 
 const SORT_COLUMNS = {
@@ -153,30 +205,29 @@ const SORT_COLUMNS = {
     finished_at: 'finished_at',
 };
 
-function getSessionMessages(id, options = {}) {
-    const db = getDb();
+async function getSessionMessages(id, options = {}) {
+    const { pool, sql: schema } = await ensureRuntimeDatabase();
     const sortBy = SORT_COLUMNS[options.sortBy] || SORT_COLUMNS.message_index;
     const direction = options.direction === 'desc' ? 'DESC' : 'ASC';
-
-    // finished_at can be NULL (non-tool messages); keep them last while preserving stable order.
     const orderClause = sortBy === 'finished_at'
         ? `finished_at IS NULL, finished_at ${direction}, message_index ASC`
         : `${sortBy} ${direction}, message_index ASC`;
-
-    return db.prepare(
-        `SELECT role, content, timestamp, created_at, finished_at, tool_call_id, tool_calls, metadata, message_index
-         FROM messages WHERE session_id = ? ORDER BY ${orderClause}`
-    ).all(id).map((row) => ({
-        role: row.role,
-        content: row.content,
-        timestamp: row.timestamp,
-        created_at: row.created_at,
-        finished_at: row.finished_at,
-        tool_call_id: row.tool_call_id,
-        tool_calls: parseJson(row.tool_calls),
-        metadata: parseJson(row.metadata),
-        message_index: row.message_index,
-    }));
+    const result = await pool.query(`
+        SELECT role, content, timestamp, created_at, finished_at, tool_call_id,
+               tool_calls, metadata, message_index
+        FROM ${schema}.messages
+        WHERE session_id = $1
+        ORDER BY ${orderClause}
+    `, [id]);
+    return result.rows.map(mapMessage);
 }
 
-module.exports = { saveSession, listSessions, loadSession, getSessionMessages, queryMessages, countMessages, close };
+module.exports = {
+    saveSession,
+    listSessions,
+    loadSession,
+    getSessionMessages,
+    queryMessages,
+    countMessages,
+    close: closeRuntimeDatabase,
+};

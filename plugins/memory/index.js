@@ -23,13 +23,13 @@ module.exports = definePlugin({
         return {
             getApi: () => memory,
             isDirty: () => memory.dirty,
-            hydrate: (sessionId) => {
+            hydrate: async (sessionId) => {
                 if (!store || !sessionId) return;
-                memory.hydrate(store.read(sessionId));
+                memory.hydrate(await store.read(sessionId));
             },
-            persist: (sessionId) => {
+            persist: async (sessionId, options = {}) => {
                 if (!store || !sessionId) return;
-                store.write(sessionId, memory.serialize());
+                await store.write(sessionId, memory.serialize(), options);
                 memory.dirty = false;
             },
             dispose: () => memory.dispose(),
@@ -41,9 +41,9 @@ module.exports = definePlugin({
         if (memory) memory.markResumed();
     },
 
-    onBeforeTurn(context) {
+    async onBeforeTurn(context) {
         const memory = context.getExtension(NAME);
-        if (memory) memory.prepareOverlays();
+        if (memory) await memory.prepareOverlays();
     },
 
     onAfterTurn(context) {

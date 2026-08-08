@@ -28,6 +28,7 @@ function loadRagConfig(overrides = {}) {
     return {
         postgres: {
             connectionString: overrides.postgres?.connectionString
+                || env.CODEAGENT_POSTGRES_URL
                 || env.RAG_POSTGRES_URL
                 || env.DATABASE_URL
                 || null,
