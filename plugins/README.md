@@ -216,7 +216,7 @@ reg.resolveApi(name);                    // 取某插件 getApi() 结果
 await reg.onBeforeTurn(context);
 await reg.onAfterTurn(context, state);
 await reg.onToolResult(context, toolCall, result);
-reg.persistAll(sessionId);               // 事务内原子持久化全部插件
+await reg.persistAll(sessionId, { client }); // PostgreSQL 事务内原子持久化全部插件
 reg.isDirty();                           // 任一插件有未保存变更
 ```
 
@@ -277,18 +277,22 @@ module.exports = {
         return {
             getApi: () => ({ /* 暴露给 tool/guard 的 api */ markDirty: () => { dirty = true; } }),
             isDirty: () => dirty,
-            hydrate: (sessionId) => {
+            hydrate: async (sessionId) => {
                 if (!store || !sessionId) return;
                 try {
-                    const env = JSON.parse(store.read(sessionId) || 'null');
+                    const env = JSON.parse(await store.read(sessionId) || 'null');
                     if (env && env.version === VERSION && Array.isArray(env.data)) {
                         state.length = 0; state.push(...env.data); dirty = false;
                     }
                 } catch { /* 降级保持空 */ }
             },
-            persist: (sessionId) => {
+            persist: async (sessionId, options = {}) => {
                 if (!store || !sessionId) return;
-                store.write(sessionId, JSON.stringify({ name: NAME, version: VERSION, data: state }));
+                await store.write(
+                    sessionId,
+                    JSON.stringify({ name: NAME, version: VERSION, data: state }),
+                    options
+                );
                 dirty = false;
             },
         };

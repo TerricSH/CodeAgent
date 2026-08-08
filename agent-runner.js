@@ -62,13 +62,13 @@ async function runAgentLoop(context, output, options = {}) {
             if (plugins) await plugins.onAfterTurn(context, state);
 
             // 安全保存点：assistant 回复已落定。
-            if (persist) persist();
+            if (persist) await persist();
 
             const guards = plugins ? plugins.getContinuationGuards(context) : [];
             const continuation = await turnContinuation.evaluate(context, guards);
             if (continuation.shouldContinue) {
                 context.addUser(continuation.reminder);
-                if (persist) persist();
+                if (persist) await persist();
                 continue;
             }
 
@@ -101,7 +101,7 @@ async function runAgentLoop(context, output, options = {}) {
         }
 
         // 安全保存点：整组工具结果已写入且配对完整、插件态已结算。
-        if (persist) persist();
+        if (persist) await persist();
     }
 }
 

@@ -38,13 +38,13 @@ const autoCompactionPlugin = definePlugin({
         return {
             getApi: () => compactor,
             isDirty: () => compactor.dirty,
-            hydrate: (sessionId) => {
+            hydrate: async (sessionId) => {
                 if (!store || !sessionId) return;
-                compactor.hydrate(store.read(sessionId));
+                compactor.hydrate(await store.read(sessionId));
             },
-            persist: (sessionId) => {
+            persist: async (sessionId, options = {}) => {
                 if (!store || !sessionId) return;
-                store.write(sessionId, compactor.serialize());
+                await store.write(sessionId, compactor.serialize(), options);
                 compactor.dirty = false;
             },
             dispose: () => compactor.dispose(),

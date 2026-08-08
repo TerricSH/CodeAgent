@@ -160,7 +160,7 @@ UI_LABELS={"prompt.user":"User","prompt.ai":"Bot"}
 - 工具调用后自动把结果回传给模型继续生成
 - 子 agent 委托执行
 - skill 自动激活
-- SQLite 会话保存
+- PostgreSQL 会话、上下文、插件状态与 Memory 持久化
 - CLI/TUI 可插拔输出层
 - 终端文案可通过 `renderers/cli/labels.json` 配置
 
@@ -363,10 +363,21 @@ github/config.json
 
 ## Sessions
 
-会话数据保存到 SQLite：
+会话、上下文消息、插件状态与 Memory 统一保存到 PostgreSQL 的独立 Runtime Schema：
 
-```text
-.code/session.sqlite
+```env
+CODEAGENT_POSTGRES_URL=postgresql://codeagent:codeagent@127.0.0.1:5432/codeagent
+CODEAGENT_POSTGRES_SCHEMA=codeagent_runtime
+RAG_POSTGRES_SCHEMA=codeagent_rag
+```
+
+`CODEAGENT_POSTGRES_URL` 是 Runtime 与 RAG 共用的首选连接；两者使用不同 Schema，避免数据职责耦合。
+也兼容 `DATABASE_URL`，以及仅为旧 RAG 配置保留的 `RAG_POSTGRES_URL`。从旧版 SQLite 一次性迁移：
+
+```bash
+npm run db:migrate:postgres
+# 验证成功后归档旧库
+npm run db:migrate:postgres -- --archive
 ```
 
 数据访问层位于：
@@ -395,7 +406,7 @@ trajectory-extraction/   # 独立的原始轨迹清洗、span 提取和跨 Rollo
 sandbox/                 # Docker 隔离执行的共享基础设施
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象
-data-layer/              # SQLite/PostgreSQL 数据访问与 repository
+data-layer/              # PostgreSQL Runtime/RAG 数据访问与 repository
 workspace/               # Workspace 路径、权限和切换
 renderers/               # 输出层插件入口与 CLI/TUI 实现
 event-dispatcher/        # 模型事件分发

@@ -25,13 +25,13 @@ module.exports = definePlugin({
         return {
             getApi: () => sandbox,
             isDirty: () => sandbox.dirty,
-            hydrate: (sessionId) => {
+            hydrate: async (sessionId) => {
                 if (!store || !sessionId) return;
-                sandbox.hydrate(store.read(sessionId));
+                sandbox.hydrate(await store.read(sessionId));
             },
-            persist: (sessionId) => {
+            persist: async (sessionId, options = {}) => {
                 if (!store || !sessionId) return;
-                store.write(sessionId, sandbox.serialize());
+                await store.write(sessionId, sandbox.serialize(), options);
                 sandbox.dirty = false;
             },
             dispose: () => sandbox.dispose(),

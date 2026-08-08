@@ -38,7 +38,7 @@ RAG 对外仍然只有一个 `rag` Tool，内部按职责拆开：
 ## 配置
 
 ```dotenv
-RAG_POSTGRES_URL=postgresql://codeagent:codeagent@127.0.0.1:5432/codeagent
+CODEAGENT_POSTGRES_URL=postgresql://codeagent:codeagent@127.0.0.1:5432/codeagent
 RAG_POSTGRES_SCHEMA=codeagent_rag
 RAG_DEFAULT_COLLECTION=project
 
@@ -51,6 +51,9 @@ RAG_EMBEDDING_DIMENSIONS=1024
 RAG_LOCAL_PYTHON=python
 RAG_LOCAL_DEVICE=cpu
 ```
+
+`CODEAGENT_POSTGRES_URL` 可由 Runtime 与 RAG 共用；Runtime 默认使用 `codeagent_runtime`，RAG
+使用 `codeagent_rag`。旧配置 `RAG_POSTGRES_URL` 和通用 `DATABASE_URL` 仍可作为兼容回退。
 
 可选限制：
 

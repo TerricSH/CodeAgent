@@ -129,7 +129,7 @@ async function handler({ agent: agentName, task }, context, injectedCapabilities
             ...(subSession.metadata || {}),
             parentSessionId: (context && context.sessionId) || null,
         },
-        persist: () => subPlugins.persistAll(subSession.id),
+        persist: (client) => subPlugins.persistAll(subSession.id, { client }),
     });
 
     try {
@@ -140,7 +140,7 @@ async function handler({ agent: agentName, task }, context, injectedCapabilities
             persist: persistSub,
             client: subClient,
         });
-        persistSub();
+        await persistSub();
         return result || '[子 agent 未返回结果]';
     } finally {
         await subPlugins.dispose(subContext, { reason: 'subagent-complete' });

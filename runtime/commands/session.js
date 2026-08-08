@@ -8,14 +8,14 @@ function match(text) {
     return text.startsWith('/session');
 }
 
-function run(text, { runtime, labels = {} }) {
+async function run(text, { runtime, labels = {} }) {
     const parts = text.trim().split(/\s+/);
     const sub = parts[1] || 'help';
     const arg = parts[2];
 
     switch (sub) {
         case 'list': {
-            const list = runtime.list();
+            const list = await runtime.list();
             if (!list.length) return { handled: true, message: labels['session.listEmpty'] };
             const item = labels['session.listItem'] || '{id}  {start}';
             const message = list.slice(0, 20).map((s) => fmt(item, { id: s.id, start: s.startTime })).join('\n');

@@ -76,19 +76,19 @@ class PluginRegistry {
         return this._invokeSync(entry, 'getApi', entry.extension.getApi);
     }
 
-    hydrateAll(sessionId) {
+    async hydrateAll(sessionId) {
         for (const entry of this.entries) {
             if (entry.extension && typeof entry.extension.hydrate === 'function') {
-                this._invokeSync(entry, 'hydrate', entry.extension.hydrate, [sessionId]);
+                await this._invoke(entry, 'hydrate', entry.extension.hydrate, [sessionId]);
             }
         }
     }
 
     // 在宿主事务内被调用：把每个扩展状态写入 store（同一连接 → 原子）。
-    persistAll(sessionId) {
+    async persistAll(sessionId, options = {}) {
         for (const entry of this.entries) {
             if (entry.extension && typeof entry.extension.persist === 'function') {
-                this._invokeSync(entry, 'persist', entry.extension.persist, [sessionId]);
+                await this._invoke(entry, 'persist', entry.extension.persist, [sessionId, options]);
             }
         }
     }
