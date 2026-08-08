@@ -40,6 +40,18 @@ function normalizeRelative(value, label) {
     return normalized;
 }
 
+function normalizeModelRef(value, label) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string' || value.length > 500) {
+        throw new Error(`${label} must be a model reference with at most 500 characters`);
+    }
+    const ref = value.trim();
+    if (!/^[a-zA-Z0-9._-]+(?:@[a-zA-Z0-9._-]+)?(?:\/[^\s\x00-\x1f]+)?$/.test(ref)) {
+        throw new Error(`${label} must use vendor[@interface][/model] syntax`);
+    }
+    return ref;
+}
+
 function loadSuite(suitesRoot, suiteId, projectRoot) {
     if (typeof suiteId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(suiteId)) {
         throw new Error('suiteId is invalid');
@@ -114,6 +126,8 @@ function loadSuite(suitesRoot, suiteId, projectRoot) {
         suiteDir: fs.realpathSync(suiteDir),
         skill,
         skillPath,
+        templateModel: normalizeModelRef(manifest.templateModel, 'templateModel'),
+        reflectionModel: normalizeModelRef(manifest.reflectionModel, 'reflectionModel'),
         rollouts: boundedInteger(manifest.rollouts, 4, 2, 8),
         evaluation: Object.freeze({
             command: evaluationCommand,
@@ -141,6 +155,8 @@ function listSuites(suitesRoot, projectRoot) {
                 evaluationCommand: suite.evaluation.command,
                 protectedPaths: [...suite.protectedPaths],
                 skillPath: suite.skillPath,
+                templateModel: suite.templateModel,
+                reflectionModel: suite.reflectionModel,
             });
         } catch (error) {
             errors.push({ directory: entry.name, error: error.message });
@@ -155,4 +171,5 @@ module.exports = {
     loadSuite,
     listSuites,
     normalizeRelative,
+    normalizeModelRef,
 };

@@ -10,6 +10,8 @@ const delegateAgent = require('./delegate-agent');
 const githubSearch = require('./github-search');
 const rag = require('./rag');
 const skillRefinement = require('./skill-refinement');
+const trajectoryExtract = require('./trajectory-extract');
+const imageInspect = require('./image-inspect');
 const { selectCapabilities } = require('../runtime/capabilities');
 
 const coreTools = [
@@ -25,6 +27,8 @@ const coreTools = [
     githubSearch,
     rag,
     skillRefinement,
+    trajectoryExtract,
+    imageInspect,
 ];
 
 function createRegistry(extraTools = [], options = {}) {

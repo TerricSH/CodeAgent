@@ -269,17 +269,25 @@ class SessionRuntime {
             ? (question) => prompt.collect(question)
             : null;
         const workspaceCapabilities = this.workspaceManager.createRuntimeCapabilities({ askUser });
+        const currentModel = this._model
+            ? Object.freeze({
+                complete: (messages, options) => runtime._model.complete(messages, options),
+                chat: (messages, options) => runtime._model.chat(messages, options),
+                info: () => runtime._model.info(),
+            })
+            : null;
+        const modelResolver = this._model && typeof this._model.resolve === 'function'
+            ? Object.freeze({
+                resolve: ref => runtime._model.resolve(ref),
+            })
+            : null;
         return {
             ...workspaceCapabilities,
             output: this.output,
             // 模型能力转发：插件（如摘要）经此做一次性补全；宿主未注入则为 null（插件应降级）。
-            model: this._model
-                ? {
-                    complete: (messages, options) => runtime._model.complete(messages, options),
-                    chat: (messages, options) => runtime._model.chat(messages, options),
-                    info: () => runtime._model.info(),
-                }
-                : null,
+            model: currentModel,
+            // 按引用创建独立模型能力；不会切换主会话模型，供 Skill Refinement 等角色化流程使用。
+            modelResolver,
         };
     }
 

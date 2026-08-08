@@ -35,7 +35,10 @@ const definition = {
     },
 };
 
-const capabilities = { required: ['sandboxScope'], optional: ['model'] };
+const capabilities = {
+    required: ['sandboxScope'],
+    optional: ['model', 'modelResolver'],
+};
 
 function format(value) {
     return JSON.stringify(value, null, 2);
@@ -53,7 +56,8 @@ function createHandler(options = {}) {
                     projectRoot: scope.projectRoot,
                     sandboxRoot: scope.sandboxRoot,
                 }, {
-                    model: injectedCapabilities.model || null,
+                    defaultModel: injectedCapabilities.model || null,
+                    modelResolver: injectedCapabilities.modelResolver || null,
                 });
 
             switch (args.action) {

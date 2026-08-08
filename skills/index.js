@@ -5,6 +5,7 @@ const systematicDebugging = require('./systematic-debugging');
 const promptMaster = require('./prompt-master');
 const grillMe = require('./grill-me');
 const gitCommit = require('./git-commit');
+const skillCreator = require('./skill-creator');
 
 const skills = [
     codeReview,
@@ -13,7 +14,8 @@ const skills = [
     systematicDebugging,
     promptMaster,
     grillMe,
-    gitCommit
+    gitCommit,
+    skillCreator
 ];
 
 const registry = {};

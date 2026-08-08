@@ -6,3 +6,8 @@ model-providers/config.json
 .code/
 model/models/bge-m3/
 model/models/bge-reranker-base/
+model/models/Qwen3-8B/
+model/models/DeepSeek-R1-Distill-Qwen-7B/
+model/models/Qwen3-8B-GGUF/
+model/models/DeepSeek-R1-Distill-Qwen-7B-GGUF/
+skill-refinement/suites/*/
