@@ -108,6 +108,9 @@ Tool 不得通过 Context 或其他全局对象动态查询运行时能力。
 
 ## Handler Rules
 
+Tool 向模型发送的 system prompt 必须放在独立 Markdown 文件中，通过 `prompts/loader.js`
+加载或渲染，不得硬编码在 JavaScript 中。
+
 - 返回值应为字符串，方便作为 `role: tool` 的消息写入上下文。
 - 如果返回结构化数据，请在 handler 内转为可读文本。
 - 异步工具直接使用 `async function handler(...)`。

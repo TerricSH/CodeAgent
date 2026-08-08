@@ -1,0 +1,19 @@
+{
+    "schemaVersion": 1,
+    "id": "replace-with-suite-directory-name",
+    "templateModel": "vendor@interface/template-model",
+    "reflectionModel": "vendor@interface/reflection-model",
+    "task": "Describe the fixed task used to evaluate this Skill.",
+    "baseline": ".",
+    "skillPath": "seed-skill.md",
+    "rollouts": 4,
+    "protectedPaths": [
+        "test",
+        "package.json",
+        "package-lock.json"
+    ],
+    "evaluation": {
+        "command": "npm test",
+        "timeoutMs": 120000
+    }
+}

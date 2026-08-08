@@ -1,4 +1,14 @@
 const Context = require('../context');
+const path = require('node:path');
+const { loadPrompt, loadPromptTemplate } = require('../prompts/loader');
+
+const renderRolloutSystem = loadPromptTemplate(path.join(__dirname, 'prompts', 'rollout-system.md'));
+const renderProtectedPath = loadPromptTemplate(
+    path.join(__dirname, 'prompts', 'protected-path-item.md')
+);
+const NO_PROTECTED_PATHS = loadPrompt(
+    path.join(__dirname, 'prompts', 'no-protected-paths.md')
+);
 
 function silentOutput() {
     const noop = () => {};
@@ -42,21 +52,13 @@ function createRolloutTools(executeCommand) {
 
 function buildRefinementRolloutPrompt({ suite, rolloutId }) {
     const protectedText = suite.protectedPaths.length
-        ? suite.protectedPaths.map(item => `- ${item}`).join('\n')
-        : '- none';
-    return [
-        '# Isolated Skill Refinement rollout',
-        '',
-        `You are rollout ${rolloutId} evaluating a candidate Skill on a controlled task.`,
-        'Follow the candidate Skill while solving the task.',
-        'Inspect and modify only the provided workspace through sandbox_exec.',
-        'A separate fixed evaluator scores the final workspace.',
-        'Do not modify protected paths:',
-        protectedText,
-        '',
-        '# Candidate Skill',
-        suite.skill,
-    ].join('\n');
+        ? suite.protectedPaths.map(item => renderProtectedPath({ path: item })).join('\n')
+        : NO_PROTECTED_PATHS;
+    return renderRolloutSystem({
+        rolloutId,
+        protectedPaths: protectedText,
+        skill: suite.skill,
+    });
 }
 
 async function runSkillRollout(options) {

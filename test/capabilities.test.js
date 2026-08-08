@@ -4,6 +4,7 @@ const Context = require('../context');
 const PluginRegistry = require('../plugins/registry');
 const { definePlugin } = require('../plugins/define-plugin');
 const tools = require('../tools');
+const SessionRuntime = require('../runtime/session-runtime');
 
 test('plugin registration rejects missing required capabilities', () => {
     const plugin = definePlugin({
@@ -87,4 +88,26 @@ test('Context no longer exposes a runtime service locator', () => {
     const context = new Context('test');
     assert.equal(typeof context.getService, 'undefined');
     assert.equal('_resolveService' in context, false);
+});
+
+test('runtime exposes an explicit model resolver without switching the current model', () => {
+    const resolvedModel = { chat() {}, complete() {}, info: () => ({ model: 'resolved' }) };
+    const requested = [];
+    const currentModel = {
+        chat() {},
+        complete() {},
+        info: () => ({ ref: null, model: 'current' }),
+        resolve(ref) {
+            requested.push(ref);
+            return resolvedModel;
+        },
+    };
+    const runtime = new SessionRuntime({ model: currentModel, workspaceRoot: process.cwd() });
+    const capabilities = runtime._buildCapabilities();
+
+    assert.equal(capabilities.model.info().model, 'current');
+    assert.equal(capabilities.modelResolver.resolve('vendor/model'), resolvedModel);
+    assert.deepEqual(requested, ['vendor/model']);
+    assert.equal(capabilities.model.info().model, 'current');
+    assert.equal(Object.isFrozen(capabilities.modelResolver), true);
 });

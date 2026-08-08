@@ -162,6 +162,7 @@ capabilities: {
 | --- | --- | --- |
 | `output` | `Output` 实例 | 输出层；交互收集见下 |
 | `model` | 模型完成/流式接口 | 摘要等插件能力 |
+| `modelResolver` | `resolve(ref)` 返回独立模型能力 | 需要按角色选择模型且不能切换主模型的流程 |
 | `workspace` | Workspace 控制接口 | 状态和一次性授权 |
 | `memoryScope` | 项目标识 | Memory 持久化隔离 |
 | `sandboxScope` | 沙盒路径 | Docker Sandbox 隔离 |

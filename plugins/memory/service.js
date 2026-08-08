@@ -1,5 +1,10 @@
 const path = require('path');
 const { searchArrays } = require('./repository');
+const { loadPromptTemplate } = require('../../prompts/loader');
+
+const renderResumeSystem = loadPromptTemplate(path.join(__dirname, 'prompts', 'resume-system.md'));
+const renderRecallSystem = loadPromptTemplate(path.join(__dirname, 'prompts', 'recall-system.md'));
+const renderRecallItem = loadPromptTemplate(path.join(__dirname, 'prompts', 'recall-item.md'));
 
 const STATE_VERSION = 1;
 
@@ -112,18 +117,16 @@ class MemoryService {
     prepareOverlays() {
         if (this.disposed) return;
         if (this.resumed && this.focus) {
-            const lines = [
-                'This is a resumed session. Use this focus only to resolve conversational references.',
-                this.focus.topic ? `Previous focus: ${this.focus.topic}` : null,
-                this.focus.lastResponse ? `Previous response: ${this.focus.lastResponse}` : null,
-                this.focus.activeFiles && this.focus.activeFiles.length
-                    ? `Active files: ${this.focus.activeFiles.join(', ')}`
-                    : null,
-                'Current user input and current files take precedence over this focus.',
-            ].filter(Boolean);
+            const content = renderResumeSystem({
+                topic: this.focus.topic || '',
+                lastResponse: this.focus.lastResponse || '',
+                activeFiles: this.focus.activeFiles && this.focus.activeFiles.length
+                    ? this.focus.activeFiles.join(', ')
+                    : '',
+            });
             this.context.setTransportOverlay('memory-resume', {
                 priority: 100,
-                messages: [{ role: 'system', content: lines.join('\n') }],
+                messages: [{ role: 'system', content }],
             });
         }
 
@@ -139,11 +142,16 @@ class MemoryService {
             this.context.setTransportOverlay('memory-recall', null);
             return;
         }
-        const content = [
-            'Relevant saved memories follow. They may be incomplete or stale.',
-            'Current user input, current session history, and verified environment facts take precedence.',
-            ...recalled.map((item) => `- [${item.id}] [${item.scope}/${item.type}] ${item.content}`),
-        ].join('\n');
+        const content = renderRecallSystem({
+            memoryItems: recalled
+                .map((item) => renderRecallItem({
+                    id: item.id,
+                    scope: item.scope,
+                    type: item.type,
+                    content: item.content,
+                }))
+                .join('\n'),
+        });
         this.context.setTransportOverlay('memory-recall', {
             priority: 90,
             messages: [{ role: 'system', content }],

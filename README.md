@@ -177,6 +177,7 @@ UI_LABELS={"prompt.user":"User","prompt.ai":"Bot"}
 | `prompt-master` | 提示词大师 - 为任何AI工具编写精准的提示词 | 提示词优化、AI工具使用 |
 | `grill-me` | 代码质询 - 对代码进行深度质询和挑战性审查 | 代码挑战、架构讨论 |
 | `git-commit` | Git提交 - 生成规范的Git提交信息 | Git工作流、提交规范 |
+| `skill-creator` | Skill creation - bootstrap an unknown Skill through verified recurrent refinement | 未知 Skill 的初始生成与验证迭代 |
 
 ### 技能使用方式
 
@@ -224,6 +225,8 @@ module.exports = {
 - `delegate_agent`: 委托子 agent
 - `rag`: 将当前项目源码索引到 PostgreSQL，或检索已索引的项目知识
 - `skill_refinement`: 通过隔离 Rollout、固定评测和结果综合生成精炼后的 Skill 候选
+- `trajectory_extract`: 读取已保存的 JSON/JSONL Agent 过程，清洗为可追溯 span 并另存结果
+- `image_inspect`: 通过独立配置的外部视觉模型 API 分析截图或按条件验证截图内容
 
 新增工具规范见 [tools/README.md](tools/README.md)。
 
@@ -299,14 +302,48 @@ checkpoint。宿主在 [`skill-refinement/suites/`](skill-refinement/suites/READ
 初始 Skill、评测命令和保护路径；`skill_refinement` Tool 从同一安全快照启动多个隔离 Rollout，
 执行固定评测并排名，再根据完整评测证据生成 `refined-skill.md` 候选。
 
+Suite 可分别设置 `templateModel` 和 `reflectionModel`：前者执行 Rollout，后者根据评分证据反思并
+生成候选。模型引用由运行时显式解析，不会切换主会话模型；省略时对应角色回退到当前会话模型。
+
 Tool 支持 `status`、`list_suites`、`refine`、`history` 和 `result`。只有主 agent 可以启动
-`refine`。源 Skill 不会被自动覆盖，结果和 `refinement-rollouts.jsonl` 只写入：
+`refine`。源 Skill 不会被自动覆盖，结果和 `raw-rollout-trajectories.jsonl` 只写入：
 
 ```text
 .code/sandboxes/<session>/skill-refinement-runs/<run-id>/
 ```
 
 模块边界和 suite 格式见 [skill-refinement/README.md](skill-refinement/README.md)。
+
+### Trajectory Extraction Tool
+
+`trajectory_extract` 不参与 Skill Refinement 的运行流程。Skill Refinement 只保存完整原始
+Rollout；需要清洗时，再把 `rawTrajectoryPath` 作为 `trajectory_extract.sourcePath` 传入。
+Tool 会将消息、LLM 回复、工具调用/结果、评测、diff 和 reward 转成带来源消息索引与 span ID
+的结构化 JSON，并写入独立的 `*.cleaned.json`，不会覆盖原始过程文件。多条 Rollout 会额外生成
+带证据 span ID 的横向比较；其中关联与 verifier link 仅表示时序/启发式关系，不宣称因果。
+
+结构化格式与安全边界见 [trajectory-extraction/README.md](trajectory-extraction/README.md)。
+
+### Image Inspect Tool
+
+`image_inspect` 是独立的外接识图 Tool，不复用或切换当前会话模型，也不依赖 RAG、Skill
+Refinement、轨迹提取器或插件服务。它支持：
+
+- `status`：检查独立视觉 API 是否已配置；
+- `analyze`：分析一张或多张 Workspace 截图；
+- `verify`：逐条检查可见验收条件，并返回证据、置信度和代码重新计算的总结果。
+
+外部接口使用 OpenAI-compatible 多模态消息格式，单独读取以下环境变量：
+
+```env
+VISION_API_KEY=your-vision-provider-key
+VISION_API_BASE_URL=https://vision-provider.example/v1
+VISION_MODEL=your-vision-model
+```
+
+调用 `analyze` 或 `verify` 会把指定图片发送给该外部服务，因此只应在用户明确要求识图或
+验图时使用。图片中的文字按不可信数据处理，不能作为工具指令。配置、限制和返回格式见
+[tools/image-inspect/README.md](tools/image-inspect/README.md)。
 
 ## Search Config
 
@@ -342,6 +379,9 @@ data-layer/
 
 ## Project Structure
 
+运行时发送给模型的提示词保存在各功能目录的 Markdown 文件中，由 `prompts/loader.js` 统一
+加载和渲染；JavaScript 不硬编码 system prompt。
+
 ```text
 mainloop.js              # CLI 主循环
 agent-runner.js          # Agent 对话与工具调用循环
@@ -351,6 +391,7 @@ model/                   # RAG 本地 Embedding、rerank、Worker 与模型文�
 context/                 # 对话上下文
 plugins/                 # 运行时插件
 skill-refinement/        # SkillOpt 风格的 Rollout、评测、排名和 Skill 候选综合
+trajectory-extraction/   # 独立的原始轨迹清洗、span 提取和跨 Rollout 比较
 sandbox/                 # Docker 隔离执行的共享基础设施
 runtime/                 # Agent 运行时流程辅助模块
 session/                 # 会话领域对象

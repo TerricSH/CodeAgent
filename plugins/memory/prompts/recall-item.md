@@ -1,0 +1,1 @@
+- [{{id}}] [{{scope}}/{{type}}] {{content}}

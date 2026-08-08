@@ -1,16 +1,17 @@
-// ask-user 格式化：把问答记录打包成给模型的工具结果，以及注入系统提示的分段文本。
+const path = require('node:path');
+const { loadPromptTemplate } = require('../../prompts/loader');
 
-// 单条问答打包（工具结果用）。
+const renderHistorySystem = loadPromptTemplate(path.join(__dirname, 'prompts', 'history-system.md'));
+const renderHistoryItem = loadPromptTemplate(path.join(__dirname, 'prompts', 'history-item.md'));
+
 function formatQA(question, answer) {
     return `问：${question}\n答：${answer}`;
 }
 
-// 多条问答拼接。
 function formatPairs(pairs) {
     return pairs.map(({ question, answer }) => formatQA(question, answer)).join('\n\n');
 }
 
-// 工具返回给模型的整批结果。
 function formatPackage(intro, pairs) {
     const lines = [];
     if (intro) lines.push(intro);
@@ -19,17 +20,16 @@ function formatPackage(intro, pairs) {
     return lines.join('\n\n');
 }
 
-// 注入系统提示的分段文本：汇总历史所有问答，作为模型的基础信息。
 function formatSection(records) {
     if (!Array.isArray(records) || records.length === 0) return '';
-    const lines = ['## 已收集的基础信息（来自用户）'];
-    for (const rec of records) {
-        const pairs = Array.isArray(rec.pairs) ? rec.pairs : [];
+    const items = [];
+    for (const record of records) {
+        const pairs = Array.isArray(record.pairs) ? record.pairs : [];
         for (const { question, answer } of pairs) {
-            lines.push(`- ${question} → ${answer}`);
+            items.push(renderHistoryItem({ question, answer }));
         }
     }
-    return lines.length > 1 ? lines.join('\n') : '';
+    return items.length > 0 ? renderHistorySystem({ items: items.join('\n') }) : '';
 }
 
 module.exports = { formatQA, formatPairs, formatPackage, formatSection };

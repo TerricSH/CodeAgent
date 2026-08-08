@@ -1,7 +1,9 @@
-function truncate(value, maxChars) {
-    const text = value == null ? '' : String(value);
-    return text.length <= maxChars ? text : `${text.slice(0, maxChars)}...[truncated]`;
-}
+const { createReflectionEvidence } = require('./evidence');
+const path = require('node:path');
+const { loadPrompt, loadPromptTemplate } = require('../prompts/loader');
+
+const REFINER_SYSTEM_PROMPT = loadPrompt(path.join(__dirname, 'prompts', 'refiner-system.md'));
+const renderRefinerUser = loadPromptTemplate(path.join(__dirname, 'prompts', 'refiner-user.md'));
 
 function stripMarkdownFence(value) {
     const text = String(value || '').trim();
@@ -9,51 +11,23 @@ function stripMarkdownFence(value) {
     return (match ? match[1] : text).trim();
 }
 
-function refinementEvidence(rollouts) {
-    return rollouts.map(rollout => ({
-        id: rollout.id,
-        score: rollout.score,
-        agentError: rollout.agentError,
-        evaluation: {
-            ok: rollout.evaluation.ok,
-            exitCode: rollout.evaluation.exitCode,
-            error: rollout.evaluation.error,
-            stdout: truncate(rollout.evaluation.stdout, 2000),
-            stderr: truncate(rollout.evaluation.stderr, 2000),
-        },
-        protectedPathViolations: rollout.protectedPathViolations,
-        changedFiles: rollout.diff.files.map(file => ({ path: file.path, status: file.status })),
-        finalReply: truncate(rollout.reply, 4000),
-    }));
-}
-
 async function refineSkill({ model, suite, rollouts }) {
     if (!model || typeof model.complete !== 'function') {
         throw new Error('Skill Refinement synthesis requires a model capability with complete()');
     }
-    const evidence = refinementEvidence(rollouts);
+    const evidence = createReflectionEvidence(rollouts);
     const result = await model.complete([
         {
             role: 'system',
-            content: [
-                'You refine reusable agent Skills from controlled rollout evidence.',
-                'Return only the complete refined Skill in Markdown.',
-                'Preserve useful constraints, correct instructions that caused failures, and avoid task-specific overfitting.',
-                'Do not wrap the result in a code fence and do not add commentary outside the Skill.',
-            ].join(' '),
+            content: REFINER_SYSTEM_PROMPT,
         },
         {
             role: 'user',
-            content: [
-                '# Skill to refine',
-                suite.skill,
-                '',
-                '# Evaluation task',
-                suite.task,
-                '',
-                '# Scored rollout evidence',
-                JSON.stringify(evidence, null, 2),
-            ].join('\n'),
+            content: renderRefinerUser({
+                skill: suite.skill,
+                task: suite.task,
+                evidence: JSON.stringify(evidence, null, 2),
+            }),
         },
     ]);
     const refined = stripMarkdownFence(result);
@@ -62,4 +36,8 @@ async function refineSkill({ model, suite, rollouts }) {
     return refined;
 }
 
-module.exports = { refineSkill, refinementEvidence, stripMarkdownFence };
+module.exports = {
+    refineSkill,
+    refinementEvidence: createReflectionEvidence,
+    stripMarkdownFence,
+};

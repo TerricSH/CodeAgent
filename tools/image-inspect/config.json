@@ -1,0 +1,12 @@
+{
+    "schemaVersion": 1,
+    "provider": "openai-compatible",
+    "apiKeyEnv": "VISION_API_KEY",
+    "baseURLEnv": "VISION_API_BASE_URL",
+    "modelEnv": "VISION_MODEL",
+    "timeoutMs": 120000,
+    "maxImageBytes": 20971520,
+    "maxTotalImageBytes": 41943040,
+    "maxImages": 8,
+    "maxOutputTokens": 4096
+}
