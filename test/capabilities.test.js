@@ -106,7 +106,9 @@ test('runtime exposes an explicit model resolver without switching the current m
     const capabilities = runtime._buildCapabilities();
 
     assert.equal(capabilities.model.info().model, 'current');
-    assert.equal(capabilities.modelResolver.resolve('vendor/model'), resolvedModel);
+    const resolved = capabilities.modelResolver.resolve('vendor/model');
+    assert.notEqual(resolved, resolvedModel);
+    assert.equal(resolved.info().model, 'resolved');
     assert.deepEqual(requested, ['vendor/model']);
     assert.equal(capabilities.model.info().model, 'current');
     assert.equal(Object.isFrozen(capabilities.modelResolver), true);

@@ -16,7 +16,7 @@ const definition = {
             properties: {
                 action: {
                     type: 'string',
-                    enum: ['status', 'index_project', 'search', 'list_documents', 'delete_document'],
+                    enum: ['status', 'index_project', 'search', 'list_documents', 'delete_document', 'delete_collection'],
                 },
                 query: { type: 'string', description: 'search 操作的自然语言查询' },
                 collection: { type: 'string', description: '默认使用当前 Workspace collection' },
@@ -81,6 +81,11 @@ function createHandler(options = {}) {
                         collection,
                         topK: args.topK,
                         candidateLimit: args.candidateLimit,
+                        eventSink: (eventType, payload) => {
+                            if (context?.auditWriter) {
+                                context.auditWriter.record({ eventType, actor: 'project-rag', payload });
+                            }
+                        },
                     });
                     break;
                 case 'list_documents':
@@ -91,6 +96,12 @@ function createHandler(options = {}) {
                         throw new Error('Subagents may not delete project documents');
                     }
                     result = await runtime.deleteDocument({ collection, documentId: args.documentId });
+                    break;
+                case 'delete_collection':
+                    if (context?.metadata?.type === 'subagent') {
+                        throw new Error('Subagents may not delete RAG collections');
+                    }
+                    result = await runtime.deleteCollection({ collection });
                     break;
                 default:
                     throw new Error(`Unsupported RAG action: ${action || '(missing)'}`);

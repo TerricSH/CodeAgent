@@ -1,8 +1,5 @@
-## activate_skill
+## Skill activation
 
-根据用户意图自动激活合适的技能模式。
+Use `activate_skill` only with a candidate returned by `skill_search`. Multiple Skills may remain active when each contributes to the current task. Their bodies are independent Context cache nodes and are subject to the same measured Token budget as other dynamic data.
 
-### 限制
-
-- 激活新技能会替换当前激活的技能
-- 同时只能有一个技能处于激活状态
+Use `deactivate_skill` when a Skill is irrelevant or conflicts with the task. Include a concise reason so the failed selection remains auditable before another Skill search.

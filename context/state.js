@@ -37,9 +37,13 @@ function createContextState(options = {}) {
         maxContextTokens: Number.isInteger(options.maxContextTokens)
             ? options.maxContextTokens
             : DEFAULT_MAX_CONTEXT_TOKENS,
-        // 传输覆盖（transport overlay）：插件经钩子登记的“摘要替最旧前缀”。
-        // { summary: Message, coverEnd: number } 或 null。仅影响传输态，存储态始终全量。
-        transportOverlay: null,
+        maxOutputTokens: Number.isInteger(options.maxOutputTokens) && options.maxOutputTokens > 0
+            ? options.maxOutputTokens
+            : null,
+        safetyMargin: Number.isInteger(options.safetyMargin) && options.safetyMargin >= 0
+            ? options.safetyMargin
+            : null,
+        lastPreparation: null,
     };
 }
 

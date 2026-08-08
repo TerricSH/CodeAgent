@@ -25,7 +25,7 @@ async function main() {
     // 会话运行时：拥有 context/plugins/toolRegistry，负责持久化与“两轮之间”的会话切换。
     const runtime = await new SessionRuntime({ output, model: modelRuntime }).start();
     // 宿主把当前模型的上下文窗口同步给 Context 作 token 预算（Context 不感知模型）。
-    runtime.context.setMaxContextTokens(modelRuntime.maxContextTokens);
+    runtime.context.setModelProfile(modelRuntime.info());
 
     let closed = false;
     rl.on('close', async () => {
@@ -42,7 +42,7 @@ async function main() {
         if (!runtime.hasPending()) return;
         const event = await runtime.applyPending();
         // 会话重建后，宿主重新把当前模型预算同步给新的 Context。
-        runtime.context.setMaxContextTokens(modelRuntime.maxContextTokens);
+        runtime.context.setModelProfile(modelRuntime.info());
         const msg = commands.presentEvent(event, { labels });
         if (msg) console.log(msg);
     }
@@ -68,6 +68,7 @@ async function main() {
                 return ask();
             }
 
+            runtime.startTrace(text);
             runtime.context.addUser(text);
             await runtime.persist();
 
@@ -77,6 +78,7 @@ async function main() {
                     toolRegistry: runtime.toolRegistry,
                     persist: () => runtime.persist(),
                     client: modelRuntime,
+                    audit: runtime.auditWriter,
                 });
                 await runtime.persist();
             } catch (err) {

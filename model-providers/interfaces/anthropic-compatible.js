@@ -12,9 +12,6 @@ class AnthropicCompatible extends BaseInterface {
         super(conn);
         this.baseURL = (this.baseURL || 'https://api.anthropic.com').replace(/\/+$/, '');
         this.anthropicVersion = conn.anthropicVersion || '2023-06-01';
-        this.maxOutputTokens = Number.isInteger(conn.maxOutputTokens) && conn.maxOutputTokens > 0
-            ? conn.maxOutputTokens
-            : 4096;
     }
 
     // 可覆写：构建请求体（厂商可加自家特殊参数）。

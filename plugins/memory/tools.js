@@ -1,18 +1,7 @@
-const prompt = `# Session history and memory
+const fs = require('node:fs');
+const path = require('node:path');
 
-Use memory__session_search when the current request depends on exact past conversation details
-that are not visible in the current context. Search the current session first. Search child
-subagent sessions only when their investigation details are needed. Session search establishes
-what was discussed; file and command tools establish what is currently true in the environment.
-
-A reopened session may continue naturally without words such as "continue" or "previously".
-Resolve vague references from the resume focus and current-session history before choosing an
-environment target. If the reference remains ambiguous, search the current session; if multiple
-targets are still plausible and a wrong choice would change files, ask the user instead of guessing.
-
-Use memory__memory_remember only for explicit, stable decisions, preferences, or verified facts.
-Never store credentials, transient reasoning, or large tool outputs. Subagents must not promote
-their own findings into project memory; return candidates to the parent agent instead.`;
+const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 
 const sessionSearch = {
     prompt,
@@ -20,18 +9,15 @@ const sessionSearch = {
         type: 'function',
         function: {
             name: 'session_search',
-            description: 'Search exact original messages in the current session or related subagent sessions.',
+            description: 'Locate relevant Audit history with semantic and keyword retrieval, fusion, and reranking.',
             parameters: {
                 type: 'object',
                 properties: {
                     query: { type: 'string' },
                     keywords: { type: 'array', items: { type: 'string' } },
-                    mode: { type: 'string', enum: ['any', 'all', 'exact'] },
                     scope: { type: 'string', enum: ['current', 'children', 'descendants', 'session_tree', 'specific'] },
                     sessionId: { type: 'string' },
-                    role: { type: 'string', enum: ['user', 'assistant', 'tool'] },
                     limit: { type: 'number' },
-                    around: { type: 'number' },
                 },
                 required: [],
             },
@@ -48,7 +34,7 @@ const sessionReadRange = {
         type: 'function',
         function: {
             name: 'session_read_range',
-            description: 'Read an exact message range from the current or a specified session.',
+            description: 'Read an exact Audit event sequence range from an authorized Session.',
             parameters: {
                 type: 'object',
                 properties: {

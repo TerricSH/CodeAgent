@@ -25,10 +25,11 @@ class Session {
             metadata,
             messages,
             fromMessageIndex: this.persistedMessageCount,
+            persistMessages: options.persistMessages !== false,
             persist: options.persist,
         });
 
-        this.persistedMessageCount = messages.length;
+        if (options.persistMessages !== false) this.persistedMessageCount = messages.length;
         return this.id;
     }
 
@@ -38,6 +39,10 @@ class Session {
 
     static async load(id) {
         return sessionRepository.loadSession(id);
+    }
+
+    static async loadMetadata(id) {
+        return sessionRepository.loadSessionMetadata(id);
     }
 
     static async messages(id, options = {}) {

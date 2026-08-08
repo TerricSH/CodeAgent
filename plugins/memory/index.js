@@ -43,7 +43,7 @@ module.exports = definePlugin({
 
     async onBeforeTurn(context) {
         const memory = context.getExtension(NAME);
-        if (memory) await memory.prepareOverlays();
+        if (memory) await memory.prepareContext();
     },
 
     onAfterTurn(context) {

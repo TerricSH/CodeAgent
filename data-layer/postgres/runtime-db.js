@@ -133,6 +133,49 @@ async function initialize(client) {
             details JSONB NOT NULL DEFAULT '{}'::jsonb
         );
 
+        CREATE TABLE IF NOT EXISTS ${schema}.audit_blobs (
+            hash TEXT PRIMARY KEY,
+            content TEXT NOT NULL,
+            mime_type TEXT NOT NULL DEFAULT 'text/plain; charset=utf-8',
+            byte_length BIGINT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ${schema}.audit_events (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL REFERENCES ${schema}.sessions(id) ON DELETE CASCADE,
+            sequence BIGINT NOT NULL,
+            trace_id TEXT,
+            span_id TEXT,
+            parent_span_id TEXT,
+            event_type TEXT NOT NULL,
+            actor TEXT,
+            content TEXT,
+            payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+            blob_ref TEXT REFERENCES ${schema}.audit_blobs(hash),
+            token_count INTEGER,
+            previous_hash TEXT,
+            event_hash TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL,
+            UNIQUE (session_id, sequence)
+        );
+
+        CREATE TABLE IF NOT EXISTS ${schema}.context_checkpoints (
+            session_id TEXT PRIMARY KEY REFERENCES ${schema}.sessions(id) ON DELETE CASCADE,
+            last_sequence BIGINT NOT NULL DEFAULT 0,
+            state JSONB NOT NULL DEFAULT '{}'::jsonb,
+            updated_at TIMESTAMPTZ NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ${schema}.audit_index_queue (
+            event_id TEXT PRIMARY KEY REFERENCES ${schema}.audit_events(id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_runtime_sessions_user_id
             ON ${schema}.sessions(user_id);
         CREATE INDEX IF NOT EXISTS idx_runtime_messages_session_index
@@ -141,6 +184,31 @@ async function initialize(client) {
             ON ${schema}.memories(scope, owner_key, status);
         CREATE INDEX IF NOT EXISTS idx_runtime_memories_subject
             ON ${schema}.memories(scope, owner_key, subject);
+        CREATE INDEX IF NOT EXISTS idx_runtime_audit_session_sequence
+            ON ${schema}.audit_events(session_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_runtime_audit_trace_sequence
+            ON ${schema}.audit_events(trace_id, sequence);
+        CREATE INDEX IF NOT EXISTS idx_runtime_audit_parent_span
+            ON ${schema}.audit_events(parent_span_id);
+        CREATE INDEX IF NOT EXISTS idx_runtime_audit_event_type
+            ON ${schema}.audit_events(event_type, created_at);
+        CREATE INDEX IF NOT EXISTS idx_runtime_audit_queue_status
+            ON ${schema}.audit_index_queue(status, created_at);
+    `);
+
+    await client.query(`
+        CREATE OR REPLACE FUNCTION ${schema}.reject_audit_event_mutation()
+        RETURNS trigger AS $$
+        BEGIN
+            RAISE EXCEPTION 'audit_events are immutable';
+        END;
+        $$ LANGUAGE plpgsql;
+    `);
+    await client.query(`DROP TRIGGER IF EXISTS audit_events_immutable ON ${schema}.audit_events`);
+    await client.query(`
+        CREATE TRIGGER audit_events_immutable
+        BEFORE UPDATE OR DELETE ON ${schema}.audit_events
+        FOR EACH ROW EXECUTE FUNCTION ${schema}.reject_audit_event_mutation()
     `);
 }
 

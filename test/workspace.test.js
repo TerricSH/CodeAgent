@@ -307,6 +307,18 @@ test('/workspace accepts a folder path with spaces', async () => {
     assert.equal(requested, 'C:\\projects\\folder with spaces');
 });
 
+function inMemoryAuditStore() {
+    return {
+        appendEvents: async (_sessionId, events) => events,
+        readEvents: async () => [],
+        readAllEvents: async () => [],
+        readCheckpoint: async () => null,
+        verifySession: async sessionId => ({ ok: true, sessionId, eventCount: 0, failures: [] }),
+        listAuditSessions: async () => [],
+        indexQueueStats: async () => ({}),
+    };
+}
+
 test('runtime atomically rebuilds workspace-scoped capabilities and preserves the conversation', async (t) => {
     const { parent, root, manager } = fixture(t);
     const nextRoot = path.join(parent, 'next root');
@@ -314,6 +326,7 @@ test('runtime atomically rebuilds workspace-scoped capabilities and preserves th
     const runtime = await new SessionRuntime({
         workspaceManager: manager,
         registryFactory: workspaceOnlyRegistry,
+        auditStore: inMemoryAuditStore(),
     }).start();
     runtime.persist = () => runtime.session.id;
 
@@ -377,6 +390,7 @@ test('runtime rolls back the workspace snapshot when scoped service rebuild fail
     const runtime = await new SessionRuntime({
         workspaceManager: manager,
         registryFactory,
+        auditStore: inMemoryAuditStore(),
     }).start();
     runtime.persist = () => runtime.session.id;
 

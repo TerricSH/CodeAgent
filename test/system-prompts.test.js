@@ -33,6 +33,12 @@ const SYSTEM_PROMPT_FILES = [
     'skill-refinement/prompts/refiner-system.md',
     'skill-refinement/prompts/rollout-system.md',
     'tools/activate-skill/prompts/active-skill-system.md',
+    'tools/activate-skill/prompt.md',
+    'tools/skill-search/prompt.md',
+    'tools/trajectory-extract/prompt.md',
+    'plugins/memory/prompt.md',
+    'context/prompts/cache-summary.md',
+    'context/prompts/source-reference.md',
     'tools/image-inspect/prompts/system.md',
 ];
 

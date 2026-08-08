@@ -4,6 +4,11 @@ const tools = require('../tools');
 const { createDefaultRegistry } = require('../plugins');
 const { buildSystemPrompt } = require('../system-prompt');
 const { WorkspaceManager } = require('../workspace');
+const AuditWriter = require('./audit-writer');
+const auditRepository = require('../data-layer/repositories/audit-repository');
+const { messagesFromAudit, cacheEntriesFromAudit, cacheNodeMessages } = require('./audit-messages');
+const AuditRenderer = require('./audit-renderer');
+const { createAuditedModelCapability } = require('./audited-model');
 
 // 会话运行时：拥有 (session, context, plugins, toolRegistry)，对外暴露当前态。
 // 切换 = 两轮之间的原子重建替换（persist 当前 → 物化目标 → 重建三件套 → 切引用）。
@@ -16,6 +21,11 @@ class SessionRuntime {
         workspaceRoot,
         plugins,
         registryFactory,
+        sessionMetadata,
+        basePrompt,
+        capabilityOverrides,
+        toolFilter,
+        auditStore,
     } = {}) {
         this.output = output;
         // 仅转发宿主能力，不拥有模型生命周期（不切换、不读预算）；可为空（降级）。
@@ -25,22 +35,52 @@ class SessionRuntime {
         this._registryFactory = typeof registryFactory === 'function'
             ? registryFactory
             : createDefaultRegistry;
+        this._sessionMetadata = sessionMetadata && typeof sessionMetadata === 'object'
+            ? { ...sessionMetadata }
+            : {};
+        this._basePrompt = basePrompt || null;
+        this._capabilityOverrides = capabilityOverrides && typeof capabilityOverrides === 'object'
+            ? capabilityOverrides
+            : {};
+        this._toolFilter = typeof toolFilter === 'function' ? toolFilter : null;
+        this._auditRepository = auditStore || auditRepository;
         this.session = null;
         this.context = null;
         this.plugins = null;
         this.toolRegistry = null;
+        this.auditWriter = null;
         this._savedFingerprint = null;
         this._persistQueue = Promise.resolve();
         this._pending = null; // { type:'new' } | { type:'switch', id }
     }
 
-    async start() {
-        await this._build(new Session(), null);
+    async start(session = null) {
+        await this._build(session || new Session({ metadata: this._sessionMetadata }), null);
         return this;
     }
 
     // 构建/替换当前会话三件套；loaded 为 null=全新会话，否则为 Session.load 结果。
     async _build(sessionInstance, loaded, options = {}) {
+        const previousWriter = this.auditWriter;
+        const auditWriter = previousWriter && previousWriter.sessionId === sessionInstance.id
+            ? previousWriter
+            : new AuditWriter(sessionInstance.id, { repository: this._auditRepository });
+        let auditEvents = [];
+        if (loaded) {
+            auditEvents = await this._auditRepository.readAllEvents({ sessionId: sessionInstance.id });
+        }
+        const checkpoint = loaded
+            ? await this._auditRepository.readCheckpoint(sessionInstance.id)
+            : null;
+        const restoredCacheEntries = Array.isArray(options.cacheEntries)
+            ? options.cacheEntries
+            : cacheEntriesFromAudit(auditEvents, checkpoint);
+        const cacheState = options.cacheCheckpoint || checkpoint?.state || {};
+        const latestFinishedTrace = [...auditEvents].reverse().find(event =>
+            event.eventType === 'task.completed' || event.eventType === 'task.failed'
+        );
+        if (latestFinishedTrace) auditWriter.previousTraceId = latestFinishedTrace.traceId;
+        const restoredMessages = messagesFromAudit(auditEvents);
         const capabilities = this._buildCapabilities();
         const plugins = this._registryFactory({
             capabilities,
@@ -48,10 +88,10 @@ class SessionRuntime {
         });
         const toolRegistry = tools.createRegistry(
             plugins.getTools(),
-            { capabilities }
+            { capabilities, toolFilter: this._toolFilter }
         );
         const systemPrompt = buildSystemPrompt({
-            basePrompt: process.env.SYSTEM_PROMPT,
+            basePrompt: this._basePrompt || process.env.SYSTEM_PROMPT,
             toolPrompts: toolRegistry.prompts,
         });
         const workspace = this.workspaceManager.status();
@@ -59,14 +99,29 @@ class SessionRuntime {
             sessionId: sessionInstance.id,
             metadata: {
                 ...(loaded && loaded.metadata ? loaded.metadata : {}),
+                ...(sessionInstance.metadata || {}),
                 workspaceId: workspace.id,
                 workspaceRoot: workspace.root,
             },
-            messages: loaded ? loaded.messages : undefined,
+            messages: restoredCacheEntries ? undefined : restoredMessages,
+            cacheEntries: restoredCacheEntries || undefined,
+            turn: cacheState.turn,
+            openDialogueId: cacheState.openDialogueId,
+            openToolSpanId: cacheState.openToolSpanId,
+            auditWriter,
+            loadSource: async (sourceRef, entry) => {
+                const currentEvents = await this._auditRepository.readAllEvents({
+                    sessionId: sessionInstance.id,
+                    eventTypes: ['context.loaded', 'context.updated'],
+                });
+                return cacheNodeMessages(currentEvents, entry.id, { preferFull: true });
+            },
             // 不再从模型读预算：SessionRuntime 不拥有模型。token 预算由宿主（mainloop）
             // 从公共 ModelRuntime 同步进来（setMaxContextTokens），会话层对模型无感知。
             resolveExtension: (name) => plugins.resolveApi(name),
         });
+        auditWriter.setCheckpointProvider(() => context.checkpoint());
+        auditWriter.setSessionStateProvider(() => ({ metadata: context.metadata }));
         // 插件按新 sessionId hydrate；systemPrompt 动态分段随新会话重建。
         try {
             await plugins.init(context, { hydrate: options.hydrate !== false });
@@ -74,8 +129,8 @@ class SessionRuntime {
                 await plugins.onSessionResume(context, {
                     sessionId: loaded.id,
                     previousClosedAt: loaded.endTime || null,
-                    messageCount: loaded.messages.length,
-                    lastMessage: loaded.messages[loaded.messages.length - 1] || null,
+                    messageCount: (restoredMessages || []).length,
+                    lastMessage: (restoredMessages || [])[(restoredMessages || []).length - 1] || null,
                 });
             }
         } catch (error) {
@@ -91,6 +146,12 @@ class SessionRuntime {
         this.context = context;
         this.plugins = plugins;
         this.toolRegistry = toolRegistry;
+        this.auditWriter = auditWriter;
+        this.auditWriter.setCheckpointProvider(() => this.context.checkpoint());
+        this.auditWriter.setSessionStateProvider(() => ({ metadata: this.context.metadata }));
+        if (this._model && typeof this._model.info === 'function') {
+            this.context.setModelProfile(this._model.info());
+        }
         this._savedFingerprint = this._fingerprint();
     }
 
@@ -112,13 +173,20 @@ class SessionRuntime {
 
     async _persistNow({ force = false, closing = false } = {}) {
         const fp = this._fingerprint();
-        const dirty = force || closing || fp !== this._savedFingerprint || this.plugins.isDirty();
+        const dirty = force || closing || fp !== this._savedFingerprint
+            || this.plugins.isDirty() || Boolean(this.auditWriter?.dirty);
         if (!dirty) return this.session.id;
         const id = await this.session.save({
             messages: this.context.snapshotMessages(),
+            persistMessages: false,
             metadata: this.context.metadata,
             endTime: closing ? new Date().toISOString() : null,
-            persist: (client) => this.plugins.persistAll(this.session.id, { client }),
+            persist: async (client) => {
+                await this.plugins.persistAll(this.session.id, { client });
+                if (this.auditWriter) {
+                    await this.auditWriter.flush(this.context.checkpoint(), client);
+                }
+            },
         });
         this._savedFingerprint = fp;
         return id;
@@ -133,6 +201,21 @@ class SessionRuntime {
         return workspace.status();
     }
     hasPending() { return Boolean(this._pending); }
+
+    startTrace(content, payload = {}) {
+        const traceId = this.auditWriter.startTrace({ content, ...payload });
+        this.context.startTask(traceId);
+        return traceId;
+    }
+
+    finishTrace(status = 'completed', payload = {}) {
+        this.context.completeTask(this.auditWriter.activeTraceId, `task-${status}`);
+        return this.auditWriter.finishTrace(status, payload);
+    }
+
+    recordAudit(event) {
+        return this.auditWriter.record(event);
+    }
 
     // —— 安全点执行切换：persist 当前 → 重建替换。只返回结构化事件，显示文本归显示层。 ——
     async applyPending() {
@@ -152,17 +235,17 @@ class SessionRuntime {
                 await this._build(new Session(), null);
                 return { type: 'new', id: this.session.id };
             }
-            const loaded = await Session.load(pending.id);
+            const loaded = await Session.loadMetadata(pending.id);
             if (!loaded) return { type: 'error', id: pending.id, reason: 'not_found' };
             await this.plugins.dispose(this.context, { reason: 'session-switch' });
             const sess = new Session({
                 id: loaded.id,
                 startTime: loaded.startTime,
                 metadata: loaded.metadata,
-                persistedMessageCount: loaded.messages.length,
+                persistedMessageCount: 0,
             });
             await this._build(sess, loaded);
-            return { type: 'switch', id: this.session.id, messageCount: loaded.messages.length };
+            return { type: 'switch', id: this.session.id, messageCount: this.context.messages.length };
         } catch (err) {
             // 切换失败不应中断主循环：返回结构化错误事件，文案由显示层呈现。
             if (pending.type === 'workspace') {
@@ -187,7 +270,8 @@ class SessionRuntime {
             id: this.session.id,
             startTime: this.session.startTime,
             metadata: { ...(this.context.metadata || {}) },
-            messages: this.context.snapshotMessages(),
+            cacheEntries: this.context.snapshotCacheEntries(),
+            cacheCheckpoint: this.context.checkpoint(),
             persistedMessageCount: this.session.persistedMessageCount,
         };
         let rebuilding = false;
@@ -203,7 +287,12 @@ class SessionRuntime {
                 metadata: retained.metadata,
                 persistedMessageCount: retained.persistedMessageCount,
             });
-            await this._build(session, retained, { hydrate: false, resume: false });
+            await this._build(session, retained, {
+                hydrate: false,
+                resume: false,
+                cacheEntries: retained.cacheEntries,
+                cacheCheckpoint: retained.cacheCheckpoint,
+            });
             newBuildReady = true;
             await this.persist({ force: true });
             return { type: 'workspace-switch', changed: true, ...this.workspaceManager.status() };
@@ -227,7 +316,12 @@ class SessionRuntime {
                         metadata: retained.metadata,
                         persistedMessageCount: retained.persistedMessageCount,
                     });
-                    await this._build(session, retained, { hydrate: true, resume: false });
+                    await this._build(session, retained, {
+                        hydrate: true,
+                        resume: false,
+                        cacheEntries: retained.cacheEntries,
+                        cacheCheckpoint: retained.cacheCheckpoint,
+                    });
                 } catch (rollbackError) {
                     throw new Error(
                         `${failure.message}; Workspace rollback failed: ${rollbackError.message}`
@@ -254,12 +348,38 @@ class SessionRuntime {
 
     async list() { return Session.list(); }
 
+    async exportAudit(options = {}) {
+        await this.persist({ force: true });
+        const renderer = new AuditRenderer({ repository: this._auditRepository });
+        return renderer.export({
+            sessionId: options.sessionId || this.session.id,
+            traceId: options.traceId,
+            fromSequence: options.fromSequence,
+            toSequence: options.toSequence,
+            outputPath: options.outputPath,
+            includeSubagents: options.includeSubagents !== false,
+            workspaceRoot: this.workspaceManager.status().root,
+        });
+    }
+
     async query(options = {}) {
         const id = options.id || this.session.id;
         const isCurrent = id === this.session.id;
-        const source = options.source || (isCurrent ? 'memory' : 'store');
+        const source = options.source || (isCurrent ? 'memory' : 'audit');
         if (isCurrent && source === 'memory') return this._queryMemory(options);
-        return Session.query(id, options);
+        const limit = Math.min(Math.max(1, Number(options.limit) || 50), 200);
+        const events = await this._auditRepository.readEvents({
+            sessionId: id,
+            fromSequence: Number.isInteger(options.fromSequence) ? options.fromSequence : undefined,
+            toSequence: Number.isInteger(options.toSequence) ? options.toSequence : undefined,
+            eventTypes: options.eventTypes,
+            limit,
+        });
+        return {
+            items: events,
+            cursor: events.length ? events[events.length - 1].sequence : null,
+            count: events.length,
+        };
     }
 
     _queryMemory(options = {}) {
@@ -285,24 +405,35 @@ class SessionRuntime {
             : null;
         const workspaceCapabilities = this.workspaceManager.createRuntimeCapabilities({ askUser });
         const currentModel = this._model
-            ? Object.freeze({
-                complete: (messages, options) => runtime._model.complete(messages, options),
-                chat: (messages, options) => runtime._model.chat(messages, options),
-                info: () => runtime._model.info(),
+            ? createAuditedModelCapability(this._model, () => runtime.auditWriter, {
+                actor: 'auxiliary-current-model',
             })
             : null;
         const modelResolver = this._model && typeof this._model.resolve === 'function'
             ? Object.freeze({
-                resolve: ref => runtime._model.resolve(ref),
+                resolve: ref => createAuditedModelCapability(
+                    runtime._model.resolve(ref),
+                    () => runtime.auditWriter,
+                    { actor: `auxiliary-model:${ref}` }
+                ),
             })
             : null;
+        const auditStore = Object.freeze({
+            readEvents: options => runtime._auditRepository.readEvents(options),
+            readAllEvents: options => runtime._auditRepository.readAllEvents(options),
+            verifySession: sessionId => runtime._auditRepository.verifySession(sessionId),
+            listAuditSessions: limit => runtime._auditRepository.listAuditSessions(limit),
+            indexQueueStats: () => runtime._auditRepository.indexQueueStats(),
+        });
         return {
             ...workspaceCapabilities,
+            ...this._capabilityOverrides,
             output: this.output,
             // 模型能力转发：插件（如摘要）经此做一次性补全；宿主未注入则为 null（插件应降级）。
             model: currentModel,
             // 按引用创建独立模型能力；不会切换主会话模型，供 Skill Refinement 等角色化流程使用。
             modelResolver,
+            auditStore,
         };
     }
 
@@ -310,6 +441,7 @@ class SessionRuntime {
         if (this.plugins && this.context) {
             await this.plugins.dispose(this.context, { reason });
         }
+        if (this.auditWriter) await this.auditWriter.flush(this.context?.checkpoint());
     }
 }
 

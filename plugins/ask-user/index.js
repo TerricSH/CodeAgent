@@ -25,11 +25,18 @@ const askUserPlugin = definePlugin({
             : null;
         const records = ext && typeof ext.list === 'function' ? ext.list() : [];
         const text = formatSection(records);
-        if (text) {
-            context.systemPrompt.upsertSection(NAME, text);
-        } else {
-            context.systemPrompt.removeSection(NAME);
+        if (!text) return;
+        const existing = context.cache.entries.find(entry => entry.sourceRef === `ask-user-history:${context.sessionId}`);
+        if (existing) {
+            context.touch(existing.id, 'ask-user-history-used');
+            return;
         }
+        context.load({
+            role: 'system',
+            content: text,
+            kind: 'user_instruction',
+            sourceRef: `ask-user-history:${context.sessionId}`,
+        });
     },
 
     init(context, { store, capabilities = {} } = {}) {

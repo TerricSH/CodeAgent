@@ -77,7 +77,23 @@ async function handler(args, context, ext) {
 
     // 仅持久化用户真实回答；取消的问题不写入历史，避免被当成基础事实注入。
     if (pairs.length > 0) {
-        ext.record({ intro, pairs, ts: new Date().toISOString() });
+        const ts = new Date().toISOString();
+        ext.record({ intro, pairs, ts });
+        const content = formatPackage(intro, pairs);
+        context.load({
+            role: 'system',
+            content,
+            kind: 'user_instruction',
+            sourceRef: `ask-user:${ts}`,
+        });
+        if (context.auditWriter) {
+            context.auditWriter.record({
+                eventType: 'user_instruction.received',
+                actor: 'user',
+                content,
+                payload: { questionCount: pairs.length },
+            });
+        }
     }
 
     if (cancelled) {

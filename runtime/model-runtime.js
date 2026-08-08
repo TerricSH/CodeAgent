@@ -18,6 +18,8 @@ function createModelCapability(client, ref = null) {
             ref,
             model: client.model,
             maxContextTokens: client.maxContextTokens,
+            maxOutputTokens: client.maxOutputTokens,
+            countTokens: (messages, tools) => client.countTokens(messages, tools),
         }),
     });
 }
@@ -40,11 +42,17 @@ class ModelRuntime {
         return this._client.maxContextTokens;
     }
 
+    get maxOutputTokens() {
+        return this._client.maxOutputTokens;
+    }
+
     info() {
         return {
             ref: this._ref,
             model: this._client.model,
             maxContextTokens: this._client.maxContextTokens,
+            maxOutputTokens: this._client.maxOutputTokens,
+            countTokens: (messages, tools) => this._client.countTokens(messages, tools),
         };
     }
 

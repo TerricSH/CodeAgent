@@ -1,5 +1,21 @@
 # RAG Tool
 
+## 公共 RAG 内核
+
+`rag-core/` 提供可复用的 Compiler、Semantic Retriever、Keyword Retriever、Candidate
+Fusion、Reranker 与 Source Adapter。Project、History 和 Skill Adapter 使用各自独立的
+collection、来源和更新策略；它们共享检索算法，但不共享领域状态或 Tool 外壳。
+
+查询流程为：
+
+```text
+语义召回 + 关键词召回 -> Reciprocal Rank Fusion -> 去重 -> rerank -> 带来源结果
+```
+
+项目 `rag` 仍保持 compiler/query/presenter 的单一 Tool 边界。History RAG 由
+`audit_index_queue` 增量编译 Audit 事件，Skill RAG 在检索前幂等编译动态发现的
+`skills/` 内容。RAG collection 是可删除、可由权威来源重建的派生投影。
+
 RAG 是 CodeAgent 的一个核心 Tool，不是插件，也不是承载数据库、模型和 Workspace 代码的独立子系统。
 它负责把当前项目源码索引到 PostgreSQL，并检索已写入的项目知识。
 

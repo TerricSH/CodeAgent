@@ -47,8 +47,9 @@ Keep these roles separate:
    improve the score. Do not select the last newly generated candidate if no subsequent run has
    verified it.
 6. When a stop condition is reached, place the best verified seed in the project-native
-   `skills/<name>/` directory as `prompt.md` plus `index.js`, register it in `skills/index.js`, and
-   run the relevant tests. Never overwrite an existing Skill without explicit user approval. Keep
+   `skills/<name>/` directory as `prompt.md` plus `index.js`, then run the relevant tests. The Skill
+   registry discovers valid Skill directories dynamically, and the Skill RAG incrementally compiles
+   them before its next search. Never overwrite an existing Skill without explicit user approval. Keep
    newer unverified candidates and all Rollout evidence only in the ignored refinement/runtime
    paths; list them separately instead of installing them.
 

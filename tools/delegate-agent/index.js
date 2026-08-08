@@ -1,9 +1,11 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require('node:fs');
+const path = require('node:path');
 const agents = require('../../agents');
-const Session = require('../../session');
+const Output = require('../../renderers');
+const providers = require('../../model-providers');
+const { createModelCapability } = require('../../runtime/model-runtime');
 
-const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8');
+const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 
 const FORWARDED_CAPABILITIES = Object.freeze([
     'workspace',
@@ -32,18 +34,25 @@ const definition = {
     type: 'function',
     function: {
         name: 'delegate_agent',
-        description: '将子任务委托给专门的子 agent 执行。可用 agent：\n' + agents.listDescription(),
+        description: `Delegate a bounded task to a specialized child Agent. Available Agents:\n${agents.listDescription()}`,
         parameters: {
             type: 'object',
             properties: {
                 agent: {
                     type: 'string',
-                    description: '要委托的 agent 名称',
-                    enum: agents.list().map(a => a.name),
+                    description: 'Specialized Agent name.',
+                    enum: agents.list().map(agent => agent.name),
                 },
-                task: {
-                    type: 'string',
-                    description: '要执行的任务描述',
+                task: { type: 'string', description: 'Bounded task for the child Agent.' },
+                contextRefs: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Explicit Context cache node IDs or sourceRefs to delegate.',
+                },
+                constraints: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Additional constraints that apply only to this delegation.',
                 },
             },
             required: ['agent', 'task'],
@@ -51,99 +60,163 @@ const definition = {
     },
 };
 
-async function handler({ agent: agentName, task }, context, injectedCapabilities) {
-    const agentConfig = agents.get(agentName);
-    if (!agentConfig) return `未知 agent: ${agentName}`;
+function latestUserInstruction(context) {
+    const latest = [...context.messages].reverse().find(message => message.role === 'user');
+    return latest?.content || null;
+}
 
-    // Lazy load to avoid circular dependency with tools/index.js
-    const tools = require('../index');
-
-    const Context = require('../../context');
-    const Output = require('../../renderers');
-    const runAgentLoop = require('../../agent-runner');
-    const providers = require('../../model-providers');
-    const { createDefaultRegistry } = require('../../plugins');
-    const { baseToolName } = require('../../plugins');
-
-    const subSession = new Session({
-        metadata: {
-            type: 'subagent',
-            agent: agentName,
-            parentSessionId: (context && context.sessionId) || null,
-            rootSessionId: (context && context.metadata && context.metadata.rootSessionId)
-                || (context && context.sessionId)
-                || null,
-            depth: Number(context && context.metadata && context.metadata.depth || 0) + 1,
-            task,
-        },
-    });
-
-    const subOutput = new Output();
-    // 子 agent 模型：用 agent 自己声明的 "厂商/模型" 引用（可与主 agent 完全不同的厂商/模型，
-    // 用更便宜/更快的模型省成本提效）；未声明则用默认模型。模型无状态，直接解析。
-    const subClient = agentConfig.model ? providers.resolve(agentConfig.model) : providers.resolveDefault();
-    // 模型能力转发：与主会话一致，给插件（如 auto-compaction 摘要）提供一次性补全；
-    // 子 agent 用自己的 client（可与主 agent 不同），未注入则插件自动降级为不压缩。
-    const subModelCapability = {
-        async complete(messages, options = {}) {
-            let text = '';
-            for await (const event of subClient.chat(messages, options)) {
-                if (event && event.type === 'content' && typeof event.content === 'string') {
-                    text += event.content;
-                }
-            }
-            return text;
-        },
-    };
-    // 子 agent 只转交 delegate_agent 显式声明收到的能力；output/model 保持子会话独立。
-    const subCapabilities = createSubagentCapabilities(injectedCapabilities, {
-        output: subOutput,
-        model: subModelCapability,
-    });
-    const subPlugins = createDefaultRegistry({ capabilities: subCapabilities });
-    const subToolRegistry = tools.createRegistry(
-        subPlugins.getTools(),
-        { capabilities: subCapabilities }
+function selectedContext(context, refs = []) {
+    const requested = new Set(refs.map(String));
+    return context.cache.entries.filter(entry =>
+        requested.has(entry.id) || requested.has(entry.sourceRef)
     );
-    const subContext = new Context(agentConfig.prompt, {
-        sessionId: subSession.id,
-        metadata: subSession.metadata,
-        // 上下文窗口取自子 agent 实际所用的 client，与主 agent 完全隔离。
-        maxContextTokens: subClient.maxContextTokens,
-        resolveExtension: (name) => subPlugins.resolveApi(name),
-    });
-    await subPlugins.init(subContext);
-    subContext.addUser(task);
+}
 
-    // 工具白名单：兼容完整命名空间名与基名，避免插件工具（如 task-ledger__task_ledger）被基名白名单漏掉。
-    const allowedTools = agentConfig.tools
-        ? subToolRegistry.definitions.filter(t =>
-            agentConfig.tools.includes(t.function.name) ||
-            agentConfig.tools.includes(baseToolName(t.function.name)))
-        : subToolRegistry.definitions;
+function toolFilter(agentConfig) {
+    if (!agentConfig.tools) return () => true;
+    return tool => {
+        const name = tool?.definition?.function?.name;
+        const separator = String(name).indexOf('__');
+        const baseName = separator >= 0 ? String(name).slice(separator + 2) : name;
+        return agentConfig.tools.includes(name) || agentConfig.tools.includes(baseName);
+    };
+}
 
-    // 子会话独立持久化：消息快照 + 扩展态在同一事务原子落库。
-    const persistSub = () => subSession.save({
-        messages: subContext.snapshotMessages(),
-        metadata: {
-            ...(subSession.metadata || {}),
-            parentSessionId: (context && context.sessionId) || null,
-        },
-        persist: (client) => subPlugins.persistAll(subSession.id, { client }),
+function clipResult(content, maxCharacters = 12000) {
+    const text = String(content || '');
+    if (text.length <= maxCharacters) return { content: text, truncated: false };
+    return {
+        content: `${text.slice(0, maxCharacters)}\n[Full result available in the child Audit trace]`,
+        truncated: true,
+    };
+}
+
+async function handler(args, context, injectedCapabilities) {
+    // Lazy imports keep the core Tool registry free of a tools -> runtime -> tools cycle.
+    const runAgentLoop = require('../../agent-runner');
+    const SessionRuntimeFactory = require('../../runtime/session-runtime-factory');
+    const agentConfig = agents.get(args.agent);
+    if (!agentConfig) return { status: 'failed', error: `Unknown Agent: ${args.agent}` };
+    const selected = selectedContext(context, args.contextRefs || []);
+    for (const entry of selected) context.touch(entry.id, 'delegated-to-subagent');
+
+    const parentSessionId = context.sessionId;
+    const rootSessionId = context.metadata?.rootSessionId || parentSessionId;
+    const metadata = Object.freeze({
+        type: 'subagent',
+        agent: args.agent,
+        parentSessionId,
+        rootSessionId,
+        depth: Number(context.metadata?.depth || 0) + 1,
+        task: args.task,
     });
+    const subOutput = new Output();
+    const ref = agentConfig.model || null;
+    const subClient = ref ? providers.resolve(ref) : providers.resolveDefault();
+    const model = createModelCapability(subClient, ref);
+    const forwarded = createSubagentCapabilities(injectedCapabilities);
+    const factory = new SessionRuntimeFactory();
+    const child = await factory.createChild({
+        parentContext: context,
+        workspaceRoot: context.metadata?.workspaceRoot,
+        output: subOutput,
+        model,
+        basePrompt: agentConfig.prompt,
+        metadata,
+        capabilities: forwarded,
+        toolFilter: toolFilter(agentConfig),
+    });
+    const delegationPackage = Object.freeze({
+        task: String(args.task),
+        currentUserInstruction: latestUserInstruction(context),
+        constraints: Object.freeze((args.constraints || []).map(String)),
+        sources: Object.freeze(selected.map(entry => Object.freeze({
+            id: entry.id,
+            kind: entry.kind,
+            sourceRef: entry.sourceRef,
+        }))),
+    });
+    const childTraceId = child.startTrace(JSON.stringify(delegationPackage), {
+        parentSessionId,
+        parentTraceId: context.auditWriter?.activeTraceId || null,
+    });
+    child.context.addUser(JSON.stringify(delegationPackage));
+    for (const entry of selected) {
+        child.context.load(entry.messages, {
+            kind: entry.kind,
+            sourceRef: entry.sourceRef,
+            taskRef: childTraceId,
+            metadata: { delegatedFrom: parentSessionId, parentCacheNodeId: entry.id },
+        });
+    }
+    if (context.auditWriter) {
+        context.auditWriter.record({
+            eventType: 'subagent.started',
+            actor: args.agent,
+            spanId: childTraceId,
+            parentSpanId: context.auditWriter.activeTraceId,
+            content: args.task,
+            payload: { childSessionId: child.session.id, usedSourceRefs: selected.map(entry => entry.sourceRef) },
+        });
+    }
 
     try {
-        const result = await runAgentLoop(subContext, subOutput, {
-            tools: allowedTools,
-            toolRegistry: subToolRegistry,
-            plugins: subPlugins,
-            persist: persistSub,
-            client: subClient,
+        await child.persist({ force: true });
+        const content = await runAgentLoop(child.context, subOutput, {
+            tools: child.toolRegistry.definitions,
+            toolRegistry: child.toolRegistry,
+            plugins: child.plugins,
+            persist: () => child.persist(),
+            client: model,
+            audit: child.auditWriter,
         });
-        await persistSub();
-        return result || '[子 agent 未返回结果]';
+        const clipped = clipResult(content);
+        const result = {
+            status: 'completed',
+            content: clipped.content,
+            contentTruncated: clipped.truncated,
+            childSessionId: child.session.id,
+            childTraceId,
+            auditRef: { sessionId: child.session.id, traceId: childTraceId },
+            usedSourceRefs: selected.map(entry => entry.sourceRef),
+            producedArtifacts: [],
+            error: null,
+        };
+        if (context.auditWriter) {
+            context.auditWriter.record({
+                eventType: 'subagent.completed',
+                actor: args.agent,
+                spanId: childTraceId,
+                parentSpanId: context.auditWriter.activeTraceId,
+                content: clipped.content,
+                payload: result,
+            });
+        }
+        return result;
+    } catch (error) {
+        const result = {
+            status: 'failed',
+            content: '',
+            childSessionId: child.session.id,
+            childTraceId,
+            auditRef: { sessionId: child.session.id, traceId: childTraceId },
+            usedSourceRefs: selected.map(entry => entry.sourceRef),
+            producedArtifacts: [],
+            error: error.message,
+        };
+        if (context.auditWriter) {
+            context.auditWriter.record({
+                eventType: 'subagent.failed',
+                actor: args.agent,
+                spanId: childTraceId,
+                parentSpanId: context.auditWriter.activeTraceId,
+                payload: result,
+            });
+        }
+        return result;
     } finally {
-        await subPlugins.dispose(subContext, { reason: 'subagent-complete' });
+        await child.persist({ force: true, closing: true }).catch(() => {});
+        await child.dispose('subagent-complete');
     }
 }
 
@@ -154,4 +227,6 @@ module.exports = {
     capabilities,
     FORWARDED_CAPABILITIES,
     createSubagentCapabilities,
+    selectedContext,
+    clipResult,
 };
