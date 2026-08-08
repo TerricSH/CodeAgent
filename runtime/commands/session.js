@@ -32,6 +32,20 @@ async function run(text, { runtime, labels = {} }) {
             if (!arg) return { handled: true, message: labels['session.usageUse'] };
             runtime.requestSwitch(arg);
             return { handled: true };
+        case 'export': {
+            const sessionId = arg || runtime.current().id;
+            const outputPath = parts.slice(3).join(' ') || null;
+            const result = await runtime.exportAudit({ sessionId, outputPath });
+            const template = labels['session.exported'] || 'Audit exported: {path} ({count} events, hash chain: {valid})';
+            return {
+                handled: true,
+                message: fmt(template, {
+                    path: result.outputPath,
+                    count: result.eventCount,
+                    valid: result.hashChainValid ? 'valid' : 'invalid',
+                }),
+            };
+        }
         default:
             return { handled: true, message: labels['session.help'] };
     }

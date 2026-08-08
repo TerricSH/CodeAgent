@@ -1,10 +1,16 @@
-const { normalizeVector } = require('../../model/vector');
 const {
     boundedInteger,
     validateCollection,
     safeString,
     embeddingModel,
 } = require('./contracts');
+const { reciprocalRankFusion } = require('../../rag-core/fusion');
+const {
+    SemanticRetriever,
+    KeywordRetriever,
+    CandidateFusion,
+    Reranker,
+} = require('../../rag-core/retrieval');
 
 class RagQuery {
     constructor({ repository, embeddingProvider, rerankProvider, config } = {}) {
@@ -20,6 +26,14 @@ class RagQuery {
         this.embeddingProvider = embeddingProvider;
         this.rerankProvider = rerankProvider;
         this.config = config;
+        this.semanticRetriever = new SemanticRetriever({
+            repository,
+            embeddingProvider,
+            dimensions: config.embedding?.dimensions,
+        });
+        this.keywordRetriever = new KeywordRetriever({ repository });
+        this.candidateFusion = new CandidateFusion({ fuse: reciprocalRankFusion });
+        this.reranker = new Reranker({ provider: rerankProvider });
     }
 
     async search(options = {}) {
@@ -33,29 +47,32 @@ class RagQuery {
             200
         );
         const model = embeddingModel(this.embeddingProvider);
-        const queryEmbeddings = await this.embeddingProvider.embed([query]);
-        if (queryEmbeddings.length !== 1) {
-            throw new Error('Embedding provider did not return one query vector');
-        }
-        const queryVector = normalizeVector(queryEmbeddings[0], 'query embedding');
-        const configuredDimensions = this.config.embedding?.dimensions;
-        if (configuredDimensions && queryVector.length !== configuredDimensions) {
-            throw new Error(
-                `Query embedding has ${queryVector.length} dimensions; `
-                + `RAG_EMBEDDING_DIMENSIONS is ${configuredDimensions}`
-            );
-        }
-        const candidates = await this.repository.searchChunks(
-            collection,
-            model,
-            queryVector,
-            candidateLimit
-        );
-        for (const candidate of candidates) {
+        const emit = typeof options.eventSink === 'function' ? options.eventSink : () => {};
+        emit('rag.query', { query, collection, topK, candidateLimit });
+        const [vectorCandidates, keywordCandidates] = await Promise.all([
+            this.semanticRetriever.retrieve({
+                query, collection, embeddingModel: model, limit: candidateLimit,
+            }),
+            this.keywordRetriever.retrieve({ query, collection, limit: candidateLimit }),
+        ]);
+        for (const candidate of vectorCandidates) {
             if (!Number.isFinite(candidate.vectorScore)) {
                 throw new Error('pgvector returned an invalid similarity score');
             }
         }
+        for (const candidate of keywordCandidates) {
+            if (!Number.isFinite(candidate.keywordScore)) {
+                throw new Error('Keyword retriever returned an invalid score');
+            }
+        }
+        emit('rag.candidates', {
+            vector: vectorCandidates.length,
+            keyword: keywordCandidates.length,
+        });
+        const candidates = this.candidateFusion.combine(
+            [vectorCandidates, keywordCandidates], candidateLimit
+        );
+        emit('rag.fused', { count: candidates.length });
 
         const rerankModel = this.rerankProvider.info?.().model || null;
         if (candidates.length === 0) {
@@ -69,11 +86,7 @@ class RagQuery {
             };
         }
 
-        const reranked = await this.rerankProvider.rerank(
-            query,
-            candidates.map(candidate => candidate.content),
-            { topN: topK }
-        );
+        const reranked = await this.reranker.rank(query, candidates, topK);
         if (!Array.isArray(reranked) || reranked.length === 0) {
             throw new Error('Rerank provider returned no results');
         }
@@ -97,11 +110,14 @@ class RagQuery {
                 charStart: candidate.charStart,
                 charEnd: candidate.charEnd,
                 vectorScore: candidate.vectorScore,
+                keywordScore: candidate.keywordScore,
+                fusedScore: candidate.fusedScore,
                 rerankScore: item.score,
                 updatedAt: candidate.updatedAt,
             });
             if (results.length >= topK) break;
         }
+        emit('rag.reranked', { count: results.length });
 
         return {
             query,

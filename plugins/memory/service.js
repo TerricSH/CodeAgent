@@ -1,6 +1,6 @@
 const path = require('path');
-const { searchArrays } = require('./repository');
 const { loadPromptTemplate } = require('../../prompts/loader');
+const auditRepository = require('../../data-layer/repositories/audit-repository');
 
 const renderResumeSystem = loadPromptTemplate(path.join(__dirname, 'prompts', 'resume-system.md'));
 const renderRecallSystem = loadPromptTemplate(path.join(__dirname, 'prompts', 'recall-system.md'));
@@ -59,6 +59,8 @@ class MemoryService {
         this.resumed = false;
         this.dirty = false;
         this.disposed = false;
+        this.resumeNodeId = null;
+        this.recallNodes = new Map();
         this.projectKey = config.projectKey
             || (context.metadata && context.metadata.projectId)
             || process.cwd();
@@ -110,11 +112,42 @@ class MemoryService {
             updatedAt: new Date().toISOString(),
         };
         this.resumed = false;
-        this.context.setTransportOverlay('memory-resume', null);
         this.dirty = true;
     }
 
-    async prepareOverlays() {
+    ragEventSink(eventType, payload) {
+        const writer = this.context.auditWriter;
+        if (!writer) return;
+        writer.record({
+            eventType,
+            actor: 'history-rag',
+            payload,
+        });
+    }
+
+    cachedRecall(query, domain) {
+        const key = `${domain}:${query}`;
+        const id = this.recallNodes.get(key);
+        if (!id) return null;
+        const entry = this.context.cache.entries.find(candidate => candidate.id === id && candidate.resident);
+        if (!entry) return null;
+        this.context.touch(id, 'memory-cache-hit');
+        return entry.metadata.result || null;
+    }
+
+    cacheRecall(query, domain, result) {
+        const entry = this.context.load({
+            role: 'system',
+            content: JSON.stringify(result),
+            kind: 'history_result',
+            sourceRef: `history-rag:${domain}:${globalThis.crypto.randomUUID()}`,
+            metadata: { query, domain, result },
+        });
+        this.recallNodes.set(`${domain}:${query}`, entry.id);
+        return result;
+    }
+
+    async prepareContext() {
         if (this.disposed) return;
         if (this.resumed && this.focus) {
             const content = renderResumeSystem({
@@ -124,24 +157,27 @@ class MemoryService {
                     ? this.focus.activeFiles.join(', ')
                     : '',
             });
-            this.context.setTransportOverlay('memory-resume', {
-                priority: 100,
-                messages: [{ role: 'system', content }],
-            });
+            if (this.resumeNodeId) this.context.touch(this.resumeNodeId, 'session-resume');
+            else {
+                this.resumeNodeId = this.context.load({
+                    role: 'system',
+                    content,
+                    kind: 'history_result',
+                    sourceRef: `memory-focus:${this.context.sessionId}`,
+                }).id;
+            }
         }
 
         if (this.config.autoRecall === false) return;
         const user = latestMessage(this.context.messages, 'user');
         const query = user && typeof user.content === 'string' ? user.content : '';
         if (!query.trim()) return;
-        const recalled = await this.repository.searchMemories(this.ownerFilters('all'), {
+        const recalled = await this.searchMemories({
             query,
             limit: this.config.autoRecallLimit || 5,
+            scope: 'all',
         });
-        if (recalled.length === 0) {
-            this.context.setTransportOverlay('memory-recall', null);
-            return;
-        }
+        if (recalled.length === 0) return;
         const content = renderRecallSystem({
             memoryItems: recalled
                 .map((item) => renderRecallItem({
@@ -152,36 +188,53 @@ class MemoryService {
                 }))
                 .join('\n'),
         });
-        this.context.setTransportOverlay('memory-recall', {
-            priority: 90,
-            messages: [{ role: 'system', content }],
+        this.context.load({
+            role: 'system',
+            content,
+            kind: 'history_result',
+            sourceRef: `memory-recall:${globalThis.crypto.randomUUID()}`,
+            metadata: { query, result: recalled },
         });
     }
 
     async searchSessions(options = {}) {
-        if ((options.scope || 'current') === 'current') {
-            return searchArrays([{
-                info: { id: this.context.sessionId, metadata: this.context.metadata },
-                messages: this.context.messages,
-            }], options);
-        }
-        return this.repository.searchSessions(this.context.sessionId, options);
+        const query = String(options.query || (options.keywords || []).join(' ')).trim();
+        if (!query) throw new Error('Session history search requires query or keywords');
+        const cached = this.cachedRecall(query, 'session');
+        if (cached) return cached;
+        const sessionIds = await this.repository.resolveSessionIds(
+            this.context.sessionId,
+            options.scope || 'current',
+            options.sessionId
+        );
+        const result = await this.repository.historyRag.search({
+            sessionIds,
+            query,
+            limit: options.limit,
+            eventSink: (type, payload) => this.ragEventSink(type, payload),
+        });
+        this.ragEventSink('memory.recalled', { query, count: result.count, sessionIds });
+        return this.cacheRecall(query, 'session', result);
+    }
+
+    // Compatibility alias for integrations built before node-based Context loading.
+    async prepareOverlays() {
+        return this.prepareContext();
     }
 
     async readSessionRange(options = {}) {
         const sessionId = options.sessionId || this.context.sessionId;
-        const start = Math.max(Number(options.start) || 0, 0);
-        const end = Math.min(Math.max(Number(options.end) || start + 20, start), start + 100);
-        if (sessionId === this.context.sessionId) {
-            return this.context.messages.slice(start, end + 1).map((message, offset) => ({
-                messageIndex: start + offset,
-                role: message.role,
-                content: message.content,
-                toolCallId: message.tool_call_id || null,
-                toolCalls: message.tool_calls || null,
-            }));
+        const start = Math.max(Number(options.start) || 1, 1);
+        const end = Math.min(Math.max(Number(options.end) || start + 20, start), start + 500);
+        const allowed = await this.repository.resolveSessionIds(
+            this.context.sessionId,
+            'specific',
+            sessionId
+        );
+        if (allowed.length === 0 && sessionId !== this.context.sessionId) {
+            throw new Error('Requested session is outside the authorized parent/child session tree');
         }
-        return this.repository.readRange(sessionId, start, end);
+        return auditRepository.readEvents({ sessionId, fromSequence: start, toSequence: end, limit: 500 });
     }
 
     async remember(options = {}) {
@@ -205,6 +258,9 @@ class MemoryService {
                 : [],
             tags: Array.isArray(options.tags) ? options.tags.map(String).slice(0, 20) : [],
             metadata: { createdBySessionType: this.context.metadata && this.context.metadata.type || 'main' },
+            traceId: this.context.auditWriter?.activeTraceId || null,
+            checkpoint: this.context.checkpoint(),
+            auditWriter: this.context.auditWriter,
         });
     }
 
@@ -212,18 +268,31 @@ class MemoryService {
         const scope = ['session', 'project', 'user', 'all'].includes(options.scope)
             ? options.scope
             : 'all';
-        return this.repository.searchMemories(this.ownerFilters(scope), options);
+        const query = String(options.query || (options.keywords || []).join(' ')).trim();
+        if (!query) throw new Error('Memory search requires query or keywords');
+        const cached = this.cachedRecall(query, `memory:${scope}`);
+        if (cached) return cached;
+        const result = await this.repository.searchMemories(this.ownerFilters(scope), {
+            ...options,
+            query,
+            eventSink: (type, payload) => this.ragEventSink(type, payload),
+        });
+        this.ragEventSink('memory.recalled', { query, count: result.length, scope });
+        return this.cacheRecall(query, `memory:${scope}`, result);
     }
 
     async forget(options = {}) {
         if (!options.id) throw new Error('Memory id is required');
-        return this.repository.forget(String(options.id), this.ownerFilters('all'));
+        return this.repository.forget(String(options.id), this.ownerFilters('all'), {
+            sessionId: this.context.sessionId,
+            traceId: this.context.auditWriter?.activeTraceId || null,
+            checkpoint: this.context.checkpoint(),
+            auditWriter: this.context.auditWriter,
+        });
     }
 
     dispose() {
         this.disposed = true;
-        this.context.setTransportOverlay('memory-resume', null);
-        this.context.setTransportOverlay('memory-recall', null);
     }
 }
 

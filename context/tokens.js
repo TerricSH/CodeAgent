@@ -27,6 +27,24 @@ function estimateTokens(message) {
     return result;
 }
 
+function estimateTextTokens(value) {
+    return estimateTokens({
+        content: typeof value === 'string' ? value : JSON.stringify(value),
+    });
+}
+
+function estimateToolsTokens(tools = []) {
+    if (!Array.isArray(tools) || tools.length === 0) return 0;
+    return estimateTextTokens(tools) + (tools.length * 8);
+}
+
+function estimateRequestTokens(messages = [], tools = []) {
+    const messageTokens = Array.isArray(messages)
+        ? messages.reduce((sum, message) => sum + estimateTokens(message), 0)
+        : 0;
+    return messageTokens + estimateToolsTokens(tools) + 16;
+}
+
 // 历史消息（不含 system）的运行 token 总数：null 时懒计算一次，之后由 add/clear 增量维护。
 function totalTokensOf(state) {
     if (state.totalTokens == null) {
@@ -56,6 +74,9 @@ function usage(state, systemMessage) {
 
 module.exports = {
     estimateTokens,
+    estimateTextTokens,
+    estimateToolsTokens,
+    estimateRequestTokens,
     totalTokensOf,
     usage,
 };

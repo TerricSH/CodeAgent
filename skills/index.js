@@ -1,38 +1,40 @@
-const codeReview = require('./code-review');
-const createProject = require('./create-project');
-const advancedCodeReview = require('./advanced-code-review');
-const systematicDebugging = require('./systematic-debugging');
-const promptMaster = require('./prompt-master');
-const grillMe = require('./grill-me');
-const gitCommit = require('./git-commit');
-const skillCreator = require('./skill-creator');
+const fs = require('node:fs');
+const path = require('node:path');
 
-const skills = [
-    codeReview,
-    createProject,
-    advancedCodeReview,
-    systematicDebugging,
-    promptMaster,
-    grillMe,
-    gitCommit,
-    skillCreator
-];
+function loadRegistry() {
+    const registry = new Map();
+    const directories = fs.readdirSync(__dirname, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .sort((left, right) => left.name.localeCompare(right.name));
+    for (const directory of directories) {
+        const indexPath = path.join(__dirname, directory.name, 'index.js');
+        if (!fs.existsSync(indexPath)) continue;
+        const resolved = require.resolve(indexPath);
+        delete require.cache[resolved];
+        const skill = require(resolved);
+        if (!skill || typeof skill.name !== 'string' || typeof skill.prompt !== 'string') {
+            throw new Error(`Invalid Skill module: ${indexPath}`);
+        }
+        if (registry.has(skill.name)) throw new Error(`Duplicate Skill name: ${skill.name}`);
+        registry.set(skill.name, skill);
+    }
+    return registry;
+}
 
-const registry = {};
-for (const s of skills) {
-    registry[s.name] = s;
+function all() {
+    return [...loadRegistry().values()];
 }
 
 function list() {
-    return skills.map(s => ({ name: s.name, description: s.description }));
+    return all().map(skill => ({ name: skill.name, description: skill.description }));
 }
 
 function get(name) {
-    return registry[name] || null;
+    return loadRegistry().get(name) || null;
 }
 
 function listDescription() {
-    return skills.map(s => `- ${s.name}: ${s.description}`).join('\n');
+    return all().map(skill => `- ${skill.name}: ${skill.description}`).join('\n');
 }
 
-module.exports = { list, get, listDescription };
+module.exports = { list, get, listDescription, all };

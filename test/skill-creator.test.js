@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const skills = require('../skills');
 const activateSkill = require('../tools/activate-skill');
+const tools = require('../tools');
 
 test('skill-creator is registered as a project Skill', () => {
     const skill = skills.get('skill-creator');
@@ -11,10 +12,8 @@ test('skill-creator is registered as a project Skill', () => {
     assert.ok(skill);
     assert.equal(skill.name, 'skill-creator');
     assert.match(skill.description, /unknown Skill/i);
-    assert.equal(
-        activateSkill.definition.function.parameters.properties.name.enum.includes('skill-creator'),
-        true
-    );
+    assert.equal(activateSkill.definition.function.parameters.properties.name.enum, undefined);
+    assert.equal(tools.has('skill_search'), true);
 });
 
 test('skill-creator keeps creation, rollout, verification, and reflection roles explicit', () => {

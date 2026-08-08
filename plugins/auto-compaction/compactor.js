@@ -82,16 +82,22 @@ class Compactor {
             this.pendingError = null;
             throw error;
         }
-        if (!this.activeSummary) {
-            context.setTransportOverlay('auto-compaction', null);
+        if (!this.activeSummary) return;
+        const existing = this.activeSummary.cacheNodeId
+            ? context.cache.entries.find(entry => entry.id === this.activeSummary.cacheNodeId)
+            : null;
+        if (existing) {
+            if (existing.resident) context.touch(existing.id, 'compaction-summary-used');
             return;
         }
-        context.setTransportOverlay('auto-compaction', {
-            priority: 40,
-            version: this.version,
-            coverEnd: this.activeSummary.coverEnd,
-            messages: [formatSummaryContent(this.activeSummary.text)],
+        const entry = context.load({
+            role: 'system',
+            content: formatSummaryContent(this.activeSummary.text),
+            kind: 'summary',
+            sourceRef: `compaction:${context.sessionId}:${this.version}`,
+            metadata: { sourceNodeIds: this.activeSummary.sourceNodeIds || [] },
         });
+        this.activeSummary.cacheNodeId = entry.id;
     }
 
     schedule(context) {
@@ -100,15 +106,15 @@ class Compactor {
         const usage = context.usage();
         if (!usage.limit || usage.used < usage.limit * this.triggerRatio) return;
 
-        const messages = context.messages;
-        const coverEnd = messages.length - this.keepRecentCount;
-        if (coverEnd < this.minCompactCount) return;
+        const entries = context.cache.entries
+            .filter(entry => entry.resident && !entry.required && entry.kind !== 'summary')
+            .sort((left, right) => left.sequence - right.sequence);
+        const selected = entries.slice(0, Math.max(0, entries.length - this.keepRecentCount));
+        if (selected.length < this.minCompactCount) return;
+        const sourceNodeIds = selected.map(entry => entry.id);
+        if (this.activeSummary && sourceNodeIds.length < this.recompactStep) return;
 
-        const previousEnd = this.activeSummary ? this.activeSummary.coverEnd : 0;
-        if (coverEnd <= previousEnd) return;
-        if (this.activeSummary && coverEnd - previousEnd < this.recompactStep) return;
-
-        const snapshot = messages.slice(previousEnd, coverEnd);
+        const snapshot = selected.flatMap(entry => entry.messages);
         const source = this.activeSummary
             ? [{
                 role: 'assistant',
@@ -125,9 +131,18 @@ class Compactor {
                 this.version += 1;
                 this.activeSummary = {
                     text: text.trim(),
-                    coverEnd,
+                    sourceNodeIds,
                     generatedAt: new Date().toISOString(),
                 };
+                const summaryEntry = context.load({
+                    role: 'system',
+                    content: formatSummaryContent(this.activeSummary.text),
+                    kind: 'summary',
+                    sourceRef: `compaction:${context.sessionId}:${this.version}`,
+                    metadata: { sourceNodeIds },
+                });
+                this.activeSummary.cacheNodeId = summaryEntry.id;
+                for (const nodeId of sourceNodeIds) context.evict(nodeId, 'compressed-to-summary');
                 this.dirty = true;
             })
             .catch((error) => {

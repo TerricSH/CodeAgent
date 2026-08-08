@@ -4,7 +4,7 @@ const { definePlugin } = require('../define-plugin');
 const NAME = 'auto-compaction';
 
 // auto-compaction 扩展：纯 onBeforeTurn 钩子，无工具/守卫。
-// 用量超阈值时调声明注入的 model 能力生成摘要，经 context.setTransportOverlay 仅作用于传输态。
+// 用量超阈值时生成摘要缓存节点，并将已摘要的原子节点转冷。
 // 存储态始终全量；摘要为派生的传输覆盖，不持久化，重载后下一轮按需重算。
 const autoCompactionPlugin = definePlugin({
     name: NAME,

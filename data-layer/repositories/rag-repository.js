@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { keywordText, postgresTsQuery } = require('../../rag-core/keywords');
 
 function validateSchema(value) {
     const schema = String(value || 'codeagent_rag');
@@ -140,9 +141,21 @@ class RagRepository {
                     char_end INTEGER NOT NULL,
                     embedding vector(${this.embeddingDimensions}) NOT NULL,
                     embedding_model TEXT NOT NULL,
+                    keyword_text TEXT NOT NULL DEFAULT '',
                     created_at TIMESTAMPTZ NOT NULL,
                     PRIMARY KEY (document_id, chunk_index)
                 )
+            `);
+            await client.query(`
+                ALTER TABLE ${this.schemaSql}.rag_chunks
+                ADD COLUMN IF NOT EXISTS keyword_text TEXT NOT NULL DEFAULT ''
+            `);
+            await client.query(`
+                ALTER TABLE ${this.schemaSql}.rag_chunks
+                ADD COLUMN IF NOT EXISTS search_vector tsvector
+                GENERATED ALWAYS AS (
+                    to_tsvector('simple', coalesce(content, '') || ' ' || coalesce(keyword_text, ''))
+                ) STORED
             `);
             await client.query(`
                 CREATE INDEX IF NOT EXISTS idx_rag_chunks_collection_model
@@ -151,6 +164,18 @@ class RagRepository {
             await client.query(`
                 CREATE INDEX IF NOT EXISTS idx_rag_chunks_embedding_hnsw
                 ON ${this.schemaSql}.rag_chunks USING hnsw (embedding vector_cosine_ops)
+            `);
+            await client.query(`
+                CREATE INDEX IF NOT EXISTS idx_rag_chunks_keyword_gin
+                ON ${this.schemaSql}.rag_chunks USING gin (search_vector)
+            `);
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS ${this.schemaSql}.rag_tombstones (
+                    collection TEXT NOT NULL,
+                    source_ref TEXT NOT NULL,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    PRIMARY KEY (collection, source_ref)
+                )
             `);
             await client.query(`
                 INSERT INTO ${this.schemaSql}.rag_settings(key, value)
@@ -263,7 +288,7 @@ class RagRepository {
                 const batch = chunks.slice(offset, offset + batchSize);
                 const params = [];
                 const rows = batch.map((chunk, index) => {
-                    const base = index * 9;
+                    const base = index * 10;
                     params.push(
                         documentId,
                         record.collection,
@@ -273,18 +298,19 @@ class RagRepository {
                         chunk.charEnd,
                         vectorLiteral(chunk.embedding, this.embeddingDimensions),
                         record.embeddingModel,
+                        keywordText(chunk.content),
                         record.updatedAt
                     );
                     return `(
                         $${base + 1}, $${base + 2}, $${base + 3}, $${base + 4},
                         $${base + 5}, $${base + 6}, $${base + 7}::vector,
-                        $${base + 8}, $${base + 9}
+                        $${base + 8}, $${base + 9}, $${base + 10}
                     )`;
                 });
                 await client.query(`
                     INSERT INTO ${this.schemaSql}.rag_chunks (
                         document_id, collection, chunk_index, content, char_start, char_end,
-                        embedding, embedding_model, created_at
+                        embedding, embedding_model, keyword_text, created_at
                     ) VALUES ${rows.join(',')}
                 `, params);
             }
@@ -317,6 +343,11 @@ class RagRepository {
                 FROM ${this.schemaSql}.rag_chunks c
                 JOIN ${this.schemaSql}.rag_documents d ON d.id = c.document_id
                 WHERE c.collection = $1 AND c.embedding_model = $2
+                  AND NOT EXISTS (
+                      SELECT 1 FROM ${this.schemaSql}.rag_tombstones t
+                      WHERE t.collection = c.collection
+                        AND t.source_ref = d.metadata->>'memoryId'
+                  )
                 ORDER BY c.embedding <=> $3::vector
                 LIMIT $4
             `, [collection, embeddingModel, queryVector, limit]);
@@ -341,6 +372,41 @@ class RagRepository {
         }
     }
 
+    async searchKeywordChunks(collection, query, limit) {
+        await this._ensureReady();
+        const tsQuery = postgresTsQuery(query);
+        if (!tsQuery) return [];
+        const result = await this.pool.query(`
+            SELECT
+                c.document_id, c.chunk_index, c.content, c.char_start, c.char_end,
+                d.source, d.title, d.metadata, d.updated_at,
+                ts_rank_cd(c.search_vector, to_tsquery('simple', $2)) AS keyword_score
+            FROM ${this.schemaSql}.rag_chunks c
+            JOIN ${this.schemaSql}.rag_documents d ON d.id = c.document_id
+            WHERE c.collection = $1
+              AND c.search_vector @@ to_tsquery('simple', $2)
+              AND NOT EXISTS (
+                  SELECT 1 FROM ${this.schemaSql}.rag_tombstones t
+                  WHERE t.collection = c.collection
+                    AND t.source_ref = d.metadata->>'memoryId'
+              )
+            ORDER BY keyword_score DESC, d.updated_at DESC
+            LIMIT $3
+        `, [collection, tsQuery, limit]);
+        return result.rows.map(row => ({
+            documentId: row.document_id,
+            chunkIndex: row.chunk_index,
+            content: row.content,
+            charStart: row.char_start,
+            charEnd: row.char_end,
+            source: row.source,
+            title: row.title,
+            metadata: row.metadata || {},
+            updatedAt: toIso(row.updated_at),
+            keywordScore: Number(row.keyword_score),
+        }));
+    }
+
     async deleteDocument(collection, id) {
         await this._ensureReady();
         const result = await this.pool.query(`
@@ -348,6 +414,26 @@ class RagRepository {
             WHERE collection = $1 AND id = $2
         `, [collection, id]);
         return result.rowCount > 0;
+    }
+
+    async deleteCollection(collection) {
+        await this._ensureReady();
+        const result = await this.pool.query(`
+            DELETE FROM ${this.schemaSql}.rag_documents WHERE collection = $1
+        `, [collection]);
+        await this.pool.query(`
+            DELETE FROM ${this.schemaSql}.rag_tombstones WHERE collection = $1
+        `, [collection]);
+        return result.rowCount;
+    }
+
+    async addTombstone(collection, sourceRef) {
+        await this._ensureReady();
+        await this.pool.query(`
+            INSERT INTO ${this.schemaSql}.rag_tombstones (collection, source_ref, created_at)
+            VALUES ($1, $2, now())
+            ON CONFLICT (collection, source_ref) DO NOTHING
+        `, [collection, sourceRef]);
     }
 
     async listDocuments(collection, limit = 50) {

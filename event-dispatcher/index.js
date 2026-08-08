@@ -3,8 +3,9 @@ const ContentHandler = require('./content-handler');
 const ToolCallsHandler = require('./tool-calls-handler');
 
 class EventDispatcher {
-    constructor(output) {
+    constructor(output, eventSink = null) {
         this.handlers = {};
+        this.eventSink = typeof eventSink === 'function' ? eventSink : null;
         this.register('thinking', new ThinkingHandler(output));
         this.register('content', new ContentHandler(output));
         this.register('tool_calls', new ToolCallsHandler(output));
@@ -15,6 +16,7 @@ class EventDispatcher {
     }
 
     dispatch(event, state) {
+        if (this.eventSink) this.eventSink(event, state);
         const handler = this.handlers[event.type];
         if (handler) handler.handle(event, state);
     }

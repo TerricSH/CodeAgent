@@ -3,6 +3,9 @@
     "version": "1.0.0",
     "private": true,
     "scripts": {
+        "migrate:audit": "node scripts/migrate-messages-to-audit.js",
+        "rebuild:history-rag": "node scripts/rebuild-history-rag.js",
+        "resume:history-rag": "node scripts/rebuild-history-rag.js --resume",
         "start": "node mainloop.js",
         "test": "node --test",
         "test:rag-local-models": "node model/smoke-local-models.js",

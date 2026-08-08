@@ -1,5 +1,23 @@
 # CodeAgent
 
+## Context、Audit、Memory 与轨迹
+
+- PostgreSQL `audit_events` 是会话完整历史的唯一权威源；事件按 Session 严格递增并形成哈希链。大型模型请求、Tool 结果和 Context 快照按内容哈希存入 `audit_blobs`。
+- Context 只保存动态热工作集。每次请求根据模型窗口、输出预留、安全余量、系统提示词、当前用户输入和 Tool schema 重新计算预算；冷数据不会为了填满窗口而自动恢复。
+- Memory 历史检索走公共 RAG 内核的语义召回与关键词召回，再经过融合和 rerank。已知 Session sequence 范围或 Trace ID 时直接读取 Audit，不经过 RAG 拼接。
+- Project、History 和 Skill 使用独立 RAG collection。项目侧仍只暴露一个 `rag` Tool；Memory 与 Skill 直接调用公共 RAG 服务，不调用项目 Tool 外壳。
+- 每条顶层用户请求自动产生 Trace。普通聊天、Tool、RAG、Skill、Subagent、Provider 返回的 reasoning 以及 Context 装卸事件都可由 `trajectory_extract` 提取。
+- Markdown 仅为按需审计导出格式。使用 `/session export [sessionId] [outputPath]` 导出，默认目录为 `.code/exports/`，导出前会验证事件序号和哈希链。
+
+旧 `messages` 数据迁移和 History RAG 重建：
+
+```bash
+npm run migrate:audit
+npm run rebuild:history-rag
+```
+
+迁移不会自动删除旧 PostgreSQL 表或数据。新运行时不再向 `messages` 写入完整会话。
+
 ## OpenAI Codex Provider
 
 Codex models use the OpenAI Responses API. Configure an OpenAI API key in `.env`:
@@ -92,6 +110,8 @@ use `docker-sandbox__sandbox_exec` when command-level filesystem isolation is re
 API_KEY=your-api-key
 API_BASE_URL=https://api.example.com/v1
 MODEL_NAME=mimo-v2.5
+MODEL_MAX_CONTEXT_TOKENS=1048576
+MODEL_MAX_OUTPUT_TOKENS=32768
 SYSTEM_PROMPT=You are a helpful AI assistant.
 OUTPUT_MODE=cli
 ```
@@ -237,12 +257,12 @@ module.exports = {
 当前内置插件：
 
 - `task-ledger`: 为当前会话初始化任务清单状态，并贡献 `task_ledger` 工具和确定性的 continuation guard。
-- `ask-user`: 需要补充信息时贡献 `ask_user` 工具，向用户批量提问（选项或自由作答），并把已收集信息注入系统提示作为基础信息。
-- `memory`: 检索当前会话及持久化记忆。
-- `auto-compaction`: 在上下文接近预算时生成传输层摘要。
+- `ask-user`: 需要补充信息时贡献 `ask_user` 工具，向用户批量提问（选项或自由作答），并把已收集信息作为 `user_instruction` 缓存节点加入 Context。
+- `memory`: 通过公共 History RAG 检索 Audit 历史与持久化记忆，已知 sequence 范围时直接读取 Audit。
+- `auto-compaction`: 作为 Context 节点压缩适配器，在 Token 压力下生成摘要表示并保留来源引用。
 - `docker-sandbox`: 在会话隔离的 Docker 工作区中执行非交互命令。
 
-插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只保存消息、系统提示状态和 metadata；插件状态由插件注册表管理。
+插件由 `plugins/index.js` 创建默认注册表，并在主会话和子 agent 会话创建后初始化。`Context` 本身只管理系统提示状态、动态缓存节点和 metadata；完整历史由 PostgreSQL Audit 保存，插件状态由插件注册表管理。
 
 插件和核心 Tool 通过 `capabilities.required/optional` 显式声明运行时依赖。宿主只在组合根提供
 `capabilities`，注册表负责校验必需项，并向每个消费者注入声明过的冻结子集。`Context` 不提供

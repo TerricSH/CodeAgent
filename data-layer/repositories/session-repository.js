@@ -61,44 +61,46 @@ async function saveSession(sessionData) {
             serialize(sessionData.metadata),
         ]);
 
-        const fromMessageIndex = Number.isInteger(sessionData.fromMessageIndex)
-            ? Math.min(Math.max(sessionData.fromMessageIndex, 0), sessionData.messages.length)
-            : 0;
-        for (let index = fromMessageIndex; index < sessionData.messages.length; index += 1) {
-            const message = sessionData.messages[index];
-            const createdAt = message.created_at || message.timestamp || new Date().toISOString();
-            await client.query(`
-                INSERT INTO ${schema}.messages (
-                    session_id, role, content, timestamp, created_at, finished_at,
-                    message_index, tool_call_id, tool_calls, metadata
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
-                ON CONFLICT (session_id, message_index) DO UPDATE SET
-                    role = excluded.role,
-                    content = excluded.content,
-                    timestamp = excluded.timestamp,
-                    created_at = excluded.created_at,
-                    finished_at = excluded.finished_at,
-                    tool_call_id = excluded.tool_call_id,
-                    tool_calls = excluded.tool_calls,
-                    metadata = excluded.metadata
-            `, [
-                sessionData.id,
-                message.role,
-                message.content == null ? null : String(message.content),
-                message.timestamp || createdAt,
-                createdAt,
-                message.finished_at || null,
-                index,
-                message.tool_call_id || null,
-                serialize(message.tool_calls),
-                serialize(message.metadata),
-            ]);
-        }
+        if (sessionData.persistMessages !== false) {
+            const fromMessageIndex = Number.isInteger(sessionData.fromMessageIndex)
+                ? Math.min(Math.max(sessionData.fromMessageIndex, 0), sessionData.messages.length)
+                : 0;
+            for (let index = fromMessageIndex; index < sessionData.messages.length; index += 1) {
+                const message = sessionData.messages[index];
+                const createdAt = message.created_at || message.timestamp || new Date().toISOString();
+                await client.query(`
+                    INSERT INTO ${schema}.messages (
+                        session_id, role, content, timestamp, created_at, finished_at,
+                        message_index, tool_call_id, tool_calls, metadata
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
+                    ON CONFLICT (session_id, message_index) DO UPDATE SET
+                        role = excluded.role,
+                        content = excluded.content,
+                        timestamp = excluded.timestamp,
+                        created_at = excluded.created_at,
+                        finished_at = excluded.finished_at,
+                        tool_call_id = excluded.tool_call_id,
+                        tool_calls = excluded.tool_calls,
+                        metadata = excluded.metadata
+                `, [
+                    sessionData.id,
+                    message.role,
+                    message.content == null ? null : String(message.content),
+                    message.timestamp || createdAt,
+                    createdAt,
+                    message.finished_at || null,
+                    index,
+                    message.tool_call_id || null,
+                    serialize(message.tool_calls),
+                    serialize(message.metadata),
+                ]);
+            }
 
-        await client.query(
-            `DELETE FROM ${schema}.messages WHERE session_id = $1 AND message_index >= $2`,
-            [sessionData.id, sessionData.messages.length]
-        );
+            await client.query(
+                `DELETE FROM ${schema}.messages WHERE session_id = $1 AND message_index >= $2`,
+                [sessionData.id, sessionData.messages.length]
+            );
+        }
 
         if (typeof sessionData.persist === 'function') {
             await sessionData.persist(client);
@@ -135,6 +137,15 @@ async function loadSession(id) {
         ...mapSession(sessionResult.rows[0]),
         messages: messageResult.rows.map(mapMessage),
     };
+}
+
+async function loadSessionMetadata(id) {
+    const { pool, sql: schema } = await ensureRuntimeDatabase();
+    const result = await pool.query(
+        `SELECT id, start_time, end_time, metadata FROM ${schema}.sessions WHERE id = $1`,
+        [id]
+    );
+    return result.rows[0] ? mapSession(result.rows[0]) : null;
 }
 
 const MAX_QUERY_LIMIT = 200;
@@ -226,6 +237,7 @@ module.exports = {
     saveSession,
     listSessions,
     loadSession,
+    loadSessionMetadata,
     getSessionMessages,
     queryMessages,
     countMessages,

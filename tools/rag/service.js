@@ -58,6 +58,14 @@ class RagService {
         };
     }
 
+    async deleteCollection(options = {}) {
+        const collection = validateCollection(options.collection, this.config.defaultCollection);
+        return {
+            collection,
+            deletedDocuments: await this.repository.deleteCollection(collection),
+        };
+    }
+
     async status() {
         const database = this.repository.info?.() || { configured: true };
         if (database.configured !== false) {

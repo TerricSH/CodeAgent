@@ -1,6 +1,6 @@
 # Skill Development Guide
 
-Skill 是模型可以激活的工作模式。激活后，skill 的提示词会注入系统提示词，改变模型的行为方式。
+Skill 是模型可以按任务需要动态检索并激活的工作模式。基础系统提示词不包含完整 Skill 清单或正文；`skill_search` 使用 Skill RAG 的语义召回与关键词召回、融合和 rerank 返回候选，`activate_skill` 再把选中的 Skill 作为独立 Context 缓存节点加载。
 
 ## Folder Structure
 
@@ -11,7 +11,6 @@ skills/
   my-skill/
     index.js       # skill 定义
     prompt.md      # skill 提示词
-    run.js         # 可选：激活时执行的脚本
 ```
 
 ## index.js Contract
@@ -23,8 +22,6 @@ module.exports = {
     name: 'my-skill',
     description: '一句话描述这个 skill 做什么',
     prompt: fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8'),
-    // 可选
-    run: require('./run'),
 };
 ```
 
@@ -33,13 +30,12 @@ module.exports = {
 | 字段 | 必填 | 说明 |
 |------|------|------|
 | name | 是 | skill 名称，kebab-case |
-| description | 是 | 简短描述，会展示在 activate_skill 工具的可选列表中 |
-| prompt | 是 | 激活后注入系统提示词的内容 |
-| run | 否 | 激活时自动执行的函数，签名 `run(context)` |
+| description | 是 | 简短描述，作为 Skill RAG 的候选元数据 |
+| prompt | 是 | 激活后加载到独立 `skill` Context 节点的内容 |
 
 ## prompt.md
 
-激活后会被注入到系统提示词的 `<active_skill>` 标签内。应该包含：
+激活后会包装成 system-role 的 `skill` Context 节点。应该包含：
 
 - 模型在该模式下的角色定义
 - 工作流程或步骤
@@ -56,62 +52,25 @@ module.exports = {
 - 性能是否可以优化
 ```
 
-## run.js（可选执行脚本）
-
-如果 skill 激活时需要执行初始化操作（如扫描项目结构、加载配置、预处理数据），可以提供 `run.js`：
-
-```js
-// skills/my-skill/run.js
-
-async function run(context) {
-    // 激活时自动执行
-    // context 是当前对话上下文，可以读取 sessionId、taskLedger 等
-
-    // 示例：扫描当前目录结构并写入上下文
-    const { execSync } = require('child_process');
-    const tree = execSync('ls -la', { encoding: 'utf-8' });
-    context.addUser(`当前项目结构:\n${tree}`);
-
-    return '初始化完成';  // 返回值会作为工具结果展示
-}
-
-module.exports = run;
-```
-
-`run` 函数：
-
-- 签名：`async function run(context)`
-- 在 `activate_skill` 工具激活该 skill 时自动调用
-- 可以操作 `context`（添加消息、读取 taskLedger 等）
-- 返回值会作为激活结果的一部分展示给用户
-- 如果不需要初始化逻辑，不要提供 `run.js`
-
 ## Registration
 
-新增 skill 后，在 `skills/index.js` 中注册：
-
-```js
-const mySkill = require('./my-skill');
-
-const skills = [existingSkill, mySkill];
-```
-
-注册后模型会在 `activate_skill` 工具的可选列表中看到该 skill。
+新增 Skill 只需写入 `skills/<skill-name>/`。`skills/index.js` 会动态发现带 `index.js` 的目录，无需修改中央清单；下次 `skill_search` 前会幂等编译到 Skill collection。
 
 ## Activation
 
-模型通过 `activate_skill` 工具自动激活 skill：
+模型先检索候选，再按候选 ID 激活 Skill：
 
 ```js
+skill_search({ query: 'review this security-sensitive change' })
 activate_skill({ name: 'my-skill' })
 ```
 
 激活时：
-1. skill 的 `prompt` 注入系统提示词
-2. 如果有 `run`，自动执行并返回结果
-3. 后续对话模型按该 skill 的模式工作
+1. Skill 的 `prompt` 加载为独立 Context 节点；
+2. 节点实际进入模型请求时记录 `skill.used`；
+3. 不适用时使用 `deactivate_skill` 转冷并记录原因，再继续检索。
 
-同一时间只能激活一个 skill，激活新 skill 会替换当前激活的。
+同一时间可以激活多个 Skill；它们共享动态 Token 预算，不争用单个 `active-skill` system section。
 
 ## Naming Rules
 

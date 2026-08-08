@@ -7,25 +7,31 @@ test('PostgreSQL runtime persists sessions, extension state, and memory', {
     skip: !connectionString,
 }, async (t) => {
     const schema = `codeagent_test_${process.pid}_${Date.now()}`;
+    const ragSchema = `${schema}_rag`;
+    const projectKey = `postgres-test:${schema}`;
     process.env.CODEAGENT_POSTGRES_URL = connectionString;
     process.env.CODEAGENT_POSTGRES_SCHEMA = schema;
+    process.env.RAG_POSTGRES_URL = connectionString;
+    process.env.RAG_POSTGRES_SCHEMA = ragSchema;
 
     const runtimeDb = require('../data-layer/postgres/runtime-db');
     const Session = require('../session');
     const extensionState = require('../data-layer/repositories/extension-state-repository');
     const { MemoryRepository } = require('../plugins/memory/repository');
     const SessionRuntime = require('../runtime/session-runtime');
+    const auditRepository = require('../data-layer/repositories/audit-repository');
 
     await runtimeDb.ensureRuntimeDatabase();
     t.after(async () => {
         const pool = runtimeDb.getRuntimePool();
+        await pool.query(`DROP SCHEMA IF EXISTS "${ragSchema}" CASCADE`);
         await pool.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
         await runtimeDb.closeRuntimeDatabase();
     });
 
     const session = new Session({
         id: `runtime-postgres-${Date.now()}`,
-        metadata: { projectId: 'postgres-test' },
+        metadata: { projectId: projectKey },
     });
     const sessionMessages = [
         { role: 'user', content: 'persist me', created_at: new Date().toISOString() },
@@ -63,7 +69,7 @@ test('PostgreSQL runtime persists sessions, extension state, and memory', {
     const memory = new MemoryRepository();
     const memoryId = await memory.remember({
         scope: 'project',
-        ownerKey: 'postgres-test',
+        ownerKey: projectKey,
         type: 'semantic',
         subject: 'database',
         content: 'Runtime state uses PostgreSQL.',
@@ -75,20 +81,42 @@ test('PostgreSQL runtime persists sessions, extension state, and memory', {
         metadata: { verified: true },
     });
     const search = await memory.searchMemories(
-        [{ scope: 'project', ownerKey: 'postgres-test' }],
+        [{ scope: 'project', ownerKey: projectKey }],
         { query: 'PostgreSQL' }
     );
     assert.equal(search[0].id, memoryId);
     assert.equal(await memory.forget(
         memoryId,
-        [{ scope: 'project', ownerKey: 'postgres-test' }]
+        [{ scope: 'project', ownerKey: projectKey }]
     ), true);
 
     const runtime = await new SessionRuntime({ workspaceRoot: process.cwd() }).start();
     runtime.context.addUser('full runtime persistence');
+    const runtimeMemory = runtime.context.getExtension('memory');
+    const runtimeMemoryId = await runtimeMemory.remember({
+        scope: 'session',
+        type: 'semantic',
+        subject: 'audit-transaction',
+        content: 'Memory and Audit commit in the same PostgreSQL transaction.',
+    });
     await runtime.persist({ force: true });
     const runtimeSession = await Session.load(runtime.session.id);
-    assert.equal(runtimeSession.messages[0].content, 'full runtime persistence');
+    assert.equal(runtimeSession.messages.length, 0);
+    const auditEvents = await auditRepository.readEvents({ sessionId: runtime.session.id });
+    assert.ok(auditEvents.some(event =>
+        event.eventType === 'dialogue.user' && event.content === 'full runtime persistence'
+    ));
+    assert.ok(auditEvents.some(event =>
+        event.eventType === 'memory.remembered' && event.payload.memoryId === runtimeMemoryId
+    ));
+    assert.equal((await auditRepository.verifySession(runtime.session.id)).ok, true);
+    await assert.rejects(
+        runtimeDb.getRuntimePool().query(`
+            UPDATE "${schema}".audit_events SET actor = 'mutated'
+            WHERE session_id = $1
+        `, [runtime.session.id]),
+        /immutable/
+    );
     assert.ok(await extensionState.readState(runtime.session.id, 'memory'));
     await runtime.dispose('integration-test');
 });

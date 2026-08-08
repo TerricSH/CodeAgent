@@ -5,6 +5,8 @@ const writeFile = require('./write-file');
 const writeFiles = require('./write-files');
 const listDir = require('./list-dir');
 const activateSkill = require('./activate-skill');
+const skillSearch = require('./skill-search');
+const deactivateSkill = require('./deactivate-skill');
 const webSearch = require('./web-search');
 const delegateAgent = require('./delegate-agent');
 const githubSearch = require('./github-search');
@@ -22,6 +24,8 @@ const coreTools = [
     writeFiles,
     listDir,
     activateSkill,
+    skillSearch,
+    deactivateSkill,
     webSearch,
     delegateAgent,
     githubSearch,
@@ -35,7 +39,7 @@ function createRegistry(extraTools = [], options = {}) {
     const registeredTools = [
         ...(options.includeCore === false ? [] : coreTools),
         ...extraTools,
-    ];
+    ].filter(tool => typeof options.toolFilter !== 'function' || options.toolFilter(tool));
     const availableCapabilities = options.capabilities || {};
     const validateCapabilities = options.validateCapabilities !== false;
     const handlers = {};

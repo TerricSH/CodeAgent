@@ -34,6 +34,7 @@ const DEFAULT_CONFIG = {
                     baseURLEnv: 'API_BASE_URL',
                     modelEnv: 'MODEL_NAME',
                     maxContextTokensEnv: 'MODEL_MAX_CONTEXT_TOKENS',
+                    maxOutputTokensEnv: 'MODEL_MAX_OUTPUT_TOKENS',
                     models: {},
                 },
                 responses: {
@@ -79,8 +80,22 @@ function loadConfig() {
 const config = loadConfig();
 
 function parseTokenBudget(value) {
-    const n = parseInt(value, 10);
+    if (!/^\d+$/.test(String(value || '').trim())) return null;
+    const n = Number(value);
     return Number.isInteger(n) && n > 0 ? n : null;
+}
+
+function configuredTokenBudget(catalogEntry, catalogKey, interfaceConfig, valueKey, envKey) {
+    if (catalogEntry && Number.isInteger(catalogEntry[catalogKey]) && catalogEntry[catalogKey] > 0) {
+        return catalogEntry[catalogKey];
+    }
+    if (interfaceConfig[envKey]) {
+        const fromEnvironment = parseTokenBudget(process.env[interfaceConfig[envKey]]);
+        if (fromEnvironment) return fromEnvironment;
+    }
+    return Number.isInteger(interfaceConfig[valueKey]) && interfaceConfig[valueKey] > 0
+        ? interfaceConfig[valueKey]
+        : null;
 }
 
 // 模型引用："厂商" / "厂商/模型" / "厂商@接口/模型"。
@@ -123,6 +138,13 @@ function buildProvider(vendorName, ifaceName, modelName) {
     const maxContextTokens = catalogEntry && Number.isInteger(catalogEntry.maxContextTokens)
         ? catalogEntry.maxContextTokens
         : (ic.maxContextTokensEnv ? parseTokenBudget(process.env[ic.maxContextTokensEnv]) : null);
+    const maxOutputTokens = configuredTokenBudget(
+        catalogEntry,
+        'maxOutputTokens',
+        ic,
+        'maxOutputTokens',
+        'maxOutputTokensEnv'
+    );
 
     // 接口实现直接就是 client：携带连接 + model + maxContextTokens，并自带 chat()。
     // 不再套一层 Provider 转发，调用链更短。
@@ -132,7 +154,7 @@ function buildProvider(vendorName, ifaceName, modelName) {
         model,
         maxContextTokens,
         anthropicVersion: ic.anthropicVersion,
-        maxOutputTokens: ic.maxOutputTokens,
+        maxOutputTokens,
         accountType: ic.accountType,
     });
 }
