@@ -4,9 +4,18 @@ const { normalizeSandboxConfig, positiveInteger } = require('../sandbox/policy')
 function normalizeRefinementConfig(config = {}) {
     const sandbox = normalizeSandboxConfig(config);
     const projectRoot = path.resolve(config.projectRoot || process.cwd());
+    const requestedBackend = String(
+        config.refinementBackend
+        || process.env.CODEAGENT_REFINEMENT_SANDBOX
+        || 'docker'
+    ).toLowerCase();
+    if (requestedBackend !== 'docker') {
+        throw new Error('Skill Refinement requires the local Docker backend');
+    }
     return Object.freeze({
         ...sandbox,
         projectRoot,
+        refinementBackend: 'docker',
         suitesRoot: path.resolve(
             config.suitesRoot || path.join(projectRoot, 'skill-refinement', 'suites')
         ),

@@ -5,6 +5,8 @@ RUN groupadd --gid 10001 sandbox \
     && mkdir -p /workspace \
     && chown -R 10001:10001 /workspace
 
+COPY --chown=10001:10001 workspace-file-tool.js /opt/codeagent/workspace-file-tool.js
+
 USER 10001:10001
 WORKDIR /workspace
 

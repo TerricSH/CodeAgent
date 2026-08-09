@@ -21,6 +21,7 @@ function appendChunk(state, chunk, limit) {
 function runProcess(file, args, options = {}) {
     const timeoutMs = options.timeoutMs || 30000;
     const maxOutputBytes = options.maxOutputBytes || 1024 * 1024;
+    const hasInput = typeof options.input === 'string' || Buffer.isBuffer(options.input);
 
     return new Promise((resolve) => {
         const startedAt = Date.now();
@@ -35,7 +36,7 @@ function runProcess(file, args, options = {}) {
                 cwd: options.cwd,
                 env: options.env || process.env,
                 windowsHide: true,
-                stdio: ['ignore', 'pipe', 'pipe'],
+                stdio: [hasInput ? 'pipe' : 'ignore', 'pipe', 'pipe'],
                 shell: false,
             });
         } catch (error) {
@@ -72,6 +73,10 @@ function runProcess(file, args, options = {}) {
 
         child.stdout.on('data', chunk => appendChunk(stdout, chunk, maxOutputBytes));
         child.stderr.on('data', chunk => appendChunk(stderr, chunk, maxOutputBytes));
+        if (hasInput) {
+            child.stdin.on('error', () => {});
+            child.stdin.end(options.input);
+        }
         child.on('error', error => finish(null, null, error));
         child.on('close', (code, signal) => finish(code, signal, null));
 
