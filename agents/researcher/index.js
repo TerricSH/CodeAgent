@@ -5,5 +5,5 @@ module.exports = {
     name: 'researcher',
     description: '研究助手 - 搜索互联网并整理信息回答问题',
     prompt: fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf-8'),
-    tools: ['web_search', 'workspace_status', 'rag', 'task_ledger'],
+    tools: ['web_search', 'workspace_status', 'rag', 'task_ledger', 'verification_gate'],
 };

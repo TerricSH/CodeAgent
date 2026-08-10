@@ -6,6 +6,16 @@ const PluginError = require('./plugin-error');
 const { validatePlugin } = require('./define-plugin');
 const { selectCapabilities } = require('../runtime/capabilities');
 
+function cloneAndFreeze(value) {
+    const cloned = JSON.parse(JSON.stringify(value));
+    const freeze = (item) => {
+        if (!item || typeof item !== 'object' || Object.isFrozen(item)) return item;
+        for (const child of Object.values(item)) freeze(child);
+        return Object.freeze(item);
+    };
+    return freeze(cloned);
+}
+
 class PluginRegistry {
     constructor(options = {}) {
         this.entries = [];
@@ -113,6 +123,79 @@ class PluginRegistry {
         await this._runHook('onToolResult', context, toolCall, result);
     }
 
+    async onBeforeToolExecute(context, tool, args) {
+        await this._runHook('onBeforeToolExecute', context, tool, args);
+    }
+
+    async onBeforeToolBatch(context, batch) {
+        await this._runHook('onBeforeToolBatch', context, batch);
+    }
+
+    deriveTracePolicy(input = {}) {
+        const policy = {};
+        for (const entry of this.entries) {
+            if (!entry.plugin.deriveTracePolicy) continue;
+            const contribution = this._invokeSync(
+                entry,
+                'deriveTracePolicy',
+                entry.plugin.deriveTracePolicy,
+                [input]
+            );
+            if (contribution == null) continue;
+            if (!contribution || typeof contribution !== 'object' || Array.isArray(contribution)) {
+                throw new TypeError(`Plugin "${entry.plugin.name}" returned an invalid Trace policy`);
+            }
+            for (const [key, value] of Object.entries(contribution)) {
+                if (Object.prototype.hasOwnProperty.call(policy, key)) {
+                    throw new Error(`Duplicate Trace policy owner: ${key}`);
+                }
+                policy[key] = value;
+            }
+        }
+        return cloneAndFreeze(policy);
+    }
+
+    requiresCompletionAuthorization(context) {
+        for (const entry of this.entries) {
+            if (!entry.plugin.requiresCompletionAuthorization) continue;
+            const required = this._invokeSync(
+                entry,
+                'requiresCompletionAuthorization',
+                entry.plugin.requiresCompletionAuthorization,
+                [context]
+            );
+            if (required) return true;
+        }
+        return false;
+    }
+
+    async authorizeTraceCompletion(context, candidate = {}) {
+        const decisions = [];
+        for (const entry of this.entries) {
+            if (!entry.plugin.authorizeTraceCompletion) continue;
+            const raw = await this._invoke(
+                entry,
+                'authorizeTraceCompletion',
+                entry.plugin.authorizeTraceCompletion,
+                [context, candidate]
+            );
+            const decision = raw === true || raw == null
+                ? { authorized: true }
+                : (raw === false ? { authorized: false } : raw);
+            if (!decision || typeof decision !== 'object' || typeof decision.authorized !== 'boolean') {
+                throw new TypeError(`Plugin "${entry.plugin.name}" returned an invalid completion decision`);
+            }
+            decisions.push(Object.freeze({ plugin: entry.plugin.name, ...decision }));
+        }
+        const denied = decisions.find(decision => !decision.authorized) || null;
+        return Object.freeze({
+            authorized: !denied,
+            decisions: Object.freeze(decisions),
+            reason: denied?.reason || null,
+            reminder: denied?.reminder || null,
+        });
+    }
+
     async onSessionResume(context, info) {
         await this._runHook('onSessionResume', context, info);
     }
@@ -146,6 +229,7 @@ class PluginRegistry {
 
         return {
             prompt: tool.prompt,
+            effects: tool.effects,
             definition: {
                 ...tool.definition,
                 function: { ...tool.definition.function, name: namespaced },

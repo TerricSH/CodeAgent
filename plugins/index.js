@@ -2,6 +2,7 @@ const PluginRegistry = require('./registry');
 const { baseToolName } = PluginRegistry;
 const { createScopedStore } = require('../data-layer/repositories/extension-state-repository');
 const taskLedgerPlugin = require('./task-ledger');
+const verificationGatePlugin = require('./verification-gate');
 const askUserPlugin = require('./ask-user');
 const workspacePlugin = require('./workspace');
 const autoCompactionPlugin = require('./auto-compaction');
@@ -12,6 +13,7 @@ const { definePlugin, validatePlugin } = require('./define-plugin');
 
 const defaultPlugins = [
     taskLedgerPlugin,
+    verificationGatePlugin,
     askUserPlugin,
     workspacePlugin,
     memoryPlugin,
@@ -46,6 +48,7 @@ function createDefaultRegistry(options = {}) {
 module.exports = {
     createDefaultRegistry,
     taskLedgerPlugin,
+    verificationGatePlugin,
     askUserPlugin,
     workspacePlugin,
     autoCompactionPlugin,

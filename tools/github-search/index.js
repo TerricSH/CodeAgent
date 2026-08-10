@@ -52,4 +52,4 @@ async function handler({ query, type, max_results }) {
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, effects: 'external' };

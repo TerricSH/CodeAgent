@@ -4,6 +4,17 @@ const ops = require('./ops');
 const ContextCache = require('./cache');
 const tokenController = require('./token-controller');
 
+function immutablePolicy(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return Object.freeze({});
+    const cloned = JSON.parse(JSON.stringify(value));
+    const freeze = (item) => {
+        if (!item || typeof item !== 'object' || Object.isFrozen(item)) return item;
+        for (const child of Object.values(item)) freeze(child);
+        return Object.freeze(item);
+    };
+    return freeze(cloned);
+}
+
 class Context {
     constructor(systemPromptText, options = {}) {
         this.systemPrompt = new SystemPrompt(systemPromptText);
@@ -13,6 +24,7 @@ class Context {
             : null;
         this._auditWriter = options.auditWriter || null;
         this._activeTaskRef = null;
+        this._activeTaskPolicy = Object.freeze({});
         this.cache = new ContextCache({
             sessionId: this.state.sessionId,
             messages: this.state.messages,
@@ -60,10 +72,26 @@ class Context {
         return this._auditWriter;
     }
 
+    get activeTaskRef() {
+        return this._activeTaskRef;
+    }
+
+    get taskPolicy() {
+        return this._activeTaskPolicy;
+    }
+
     _record(event) {
         if (this._auditWriter && typeof this._auditWriter.record === 'function') {
-            this._auditWriter.record(event);
+            return this._auditWriter.record(event);
         }
+        return null;
+    }
+
+    recordAudit(event, options = {}) {
+        if (this._auditWriter && typeof this._auditWriter.record === 'function') {
+            return this._auditWriter.record(event, options);
+        }
+        return null;
     }
 
     _syncMessages() {
@@ -91,8 +119,9 @@ class Context {
         return result;
     }
 
-    startTask(taskRef) {
+    startTask(taskRef, policy = {}) {
         this._activeTaskRef = taskRef || null;
+        this._activeTaskPolicy = immutablePolicy(policy);
         const latest = [...this.cache.entries].reverse().find(entry =>
             entry.required && entry.messages.some(message => message.role === 'user')
         );
@@ -102,7 +131,10 @@ class Context {
 
     completeTask(taskRef = this._activeTaskRef, reason = 'task-completed') {
         const evicted = this.cache.completeTask(taskRef, reason);
-        if (taskRef === this._activeTaskRef) this._activeTaskRef = null;
+        if (taskRef === this._activeTaskRef) {
+            this._activeTaskRef = null;
+            this._activeTaskPolicy = Object.freeze({});
+        }
         this._invalidatePreparation();
         this._syncMessages();
         return evicted;

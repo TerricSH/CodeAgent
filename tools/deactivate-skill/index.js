@@ -31,4 +31,4 @@ function handler({ name, reason }, context) {
     return { unloaded: true, name, reason };
 }
 
-module.exports = { definition, handler };
+module.exports = { definition, handler, effects: 'control' };

@@ -117,4 +117,8 @@ function createHandler(options = {}) {
 
 const handler = createHandler();
 
-module.exports = { definition, handler, prompt, capabilities, createHandler, defaultCollection };
+function effects(args = {}) {
+    return ['status', 'search', 'list_documents'].includes(args.action) ? 'read' : 'write';
+}
+
+module.exports = { definition, handler, prompt, capabilities, createHandler, defaultCollection, effects };

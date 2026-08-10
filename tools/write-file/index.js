@@ -36,4 +36,4 @@ function handler({ path: filePath, content }, context, injectedCapabilities) {
     }
 }
 
-module.exports = { definition, handler, prompt, capabilities };
+module.exports = { definition, handler, prompt, capabilities, effects: 'write' };

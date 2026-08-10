@@ -39,6 +39,7 @@ class SessionRuntime {
             ? { ...sessionMetadata }
             : {};
         this._basePrompt = basePrompt || null;
+        this._traceBasePrompt = this._basePrompt || process.env.SYSTEM_PROMPT || '';
         this._capabilityOverrides = capabilityOverrides && typeof capabilityOverrides === 'object'
             ? capabilityOverrides
             : {};
@@ -88,10 +89,16 @@ class SessionRuntime {
         });
         const toolRegistry = tools.createRegistry(
             plugins.getTools(),
-            { capabilities, toolFilter: this._toolFilter }
+            {
+                capabilities,
+                toolFilter: this._toolFilter,
+                onBeforeBatch: (context, batch) => plugins.onBeforeToolBatch(context, batch),
+                onBeforeExecute: (context, tool, args) => plugins.onBeforeToolExecute(context, tool, args),
+            }
         );
+        this._traceBasePrompt = this._basePrompt || process.env.SYSTEM_PROMPT || '';
         const systemPrompt = buildSystemPrompt({
-            basePrompt: this._basePrompt || process.env.SYSTEM_PROMPT,
+            basePrompt: this._traceBasePrompt,
             toolPrompts: toolRegistry.prompts,
         });
         const workspace = this.workspaceManager.status();
@@ -202,9 +209,22 @@ class SessionRuntime {
     }
     hasPending() { return Boolean(this._pending); }
 
-    startTrace(content, payload = {}) {
-        const traceId = this.auditWriter.startTrace({ content, ...payload });
-        this.context.startTask(traceId);
+    startTrace(content, payload = {}, options = {}) {
+        const policySource = options.policySource || 'direct-user';
+        if (!['direct-user', 'internal'].includes(policySource)) {
+            throw new TypeError(`Unsupported Trace policy source: ${policySource}`);
+        }
+        const derivedPolicy = this.plugins.deriveTracePolicy({
+            basePrompt: this._traceBasePrompt,
+            userContent: policySource === 'direct-user' ? content : '',
+            policySource,
+        });
+        const explicitPolicy = options.tracePolicy && typeof options.tracePolicy === 'object'
+            ? options.tracePolicy
+            : {};
+        const tracePolicy = { ...derivedPolicy, ...explicitPolicy };
+        const traceId = this.auditWriter.startTrace({ content, ...payload, policySource, tracePolicy });
+        this.context.startTask(traceId, tracePolicy);
         return traceId;
     }
 

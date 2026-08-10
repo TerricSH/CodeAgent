@@ -184,6 +184,7 @@ module.exports = {
     handler,
     prompt,
     capabilities,
+    effects: 'write',
     createHandler,
     parseRecords,
     defaultOutputPath,

@@ -21,8 +21,13 @@ class EventDispatcher {
         if (handler) handler.handle(event, state);
     }
 
-    createState() {
-        return { reply: '', inThinking: false, pendingToolCalls: null };
+    createState(options = {}) {
+        return {
+            reply: '',
+            inThinking: false,
+            pendingToolCalls: null,
+            deferContent: options.deferContent === true,
+        };
     }
 }
 

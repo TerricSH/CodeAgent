@@ -5,6 +5,7 @@ class PluginError extends Error {
         this.name = 'PluginError';
         this.plugin = plugin;
         this.phase = phase;
+        if (source.code) this.code = source.code;
     }
 }
 

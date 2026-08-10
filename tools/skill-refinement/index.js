@@ -91,4 +91,4 @@ function createHandler(options = {}) {
 
 const handler = createHandler();
 
-module.exports = { definition, handler, prompt, capabilities, createHandler };
+module.exports = { definition, handler, prompt, capabilities, createHandler, effects: 'execute' };

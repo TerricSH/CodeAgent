@@ -54,4 +54,4 @@ async function handler({ name }, context) {
     return { activated: true, name, description: skill.description, cacheNodeId: entry.id };
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, effects: 'control' };
