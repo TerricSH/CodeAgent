@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { pathIsInside, ensureContainedDirectory } = require('../sandbox/workspace');
 
 const SNAPSHOT_IGNORES = new Set(['.git', '.code', 'node_modules']);
 const SNAPSHOT_SECRET_PATHS = new Set([
@@ -10,19 +11,6 @@ const SNAPSHOT_SECRET_PATHS = new Set([
 ]);
 const MAX_SNAPSHOT_FILES = 10000;
 const MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024;
-
-function pathIsInside(root, candidate) {
-    return candidate === root || candidate.startsWith(`${root}${path.sep}`);
-}
-
-function ensureContainedDirectory(root, candidate, label = 'Skill Refinement directory') {
-    fs.mkdirSync(root, { recursive: true });
-    const realRoot = fs.realpathSync(path.resolve(root));
-    fs.mkdirSync(candidate, { recursive: true });
-    const realCandidate = fs.realpathSync(path.resolve(candidate));
-    if (!pathIsInside(realRoot, realCandidate)) throw new Error(`${label} escaped its configured root`);
-    return realCandidate;
-}
 
 function copySnapshot(source, destination) {
     const sourceRoot = fs.realpathSync(path.resolve(source));
