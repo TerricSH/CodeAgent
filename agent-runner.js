@@ -135,7 +135,10 @@ async function runAgentLoop(context, output, options = {}) {
             }
 
             try {
-                for await (const event of client.chat(prepared.messages, { tools: toolDefs })) {
+                for await (const event of client.chat(prepared.messages, {
+                    ...(options.modelOptions || {}),
+                    tools: toolDefs,
+                })) {
                     dispatcher.dispatch(event, state);
                 }
                 if (audit) {
@@ -251,7 +254,12 @@ async function runAgentLoop(context, output, options = {}) {
                     result = JSON.stringify(failure);
                 } else {
                     try {
-                        result = await toolRegistry.execute(toolCall.name, toolCall.arguments, context);
+                        result = await toolRegistry.execute(
+                            toolCall.name,
+                            toolCall.arguments,
+                            context,
+                            { toolCallId: toolCall.id, modelSpanId: activeModelSpanId }
+                        );
                     } catch (error) {
                         failure = safeError(error);
                         result = JSON.stringify(failure);

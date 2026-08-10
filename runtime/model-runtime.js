@@ -19,6 +19,7 @@ function createModelCapability(client, ref = null) {
             model: client.model,
             maxContextTokens: client.maxContextTokens,
             maxOutputTokens: client.maxOutputTokens,
+            reasoningRequired: Boolean(client.reasoningRequired),
             countTokens: (messages, tools) => client.countTokens(messages, tools),
         }),
     });
@@ -52,6 +53,7 @@ class ModelRuntime {
             model: this._client.model,
             maxContextTokens: this._client.maxContextTokens,
             maxOutputTokens: this._client.maxOutputTokens,
+            reasoningRequired: Boolean(this._client.reasoningRequired),
             countTokens: (messages, tools) => this._client.countTokens(messages, tools),
         };
     }

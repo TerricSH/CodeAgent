@@ -8,6 +8,10 @@ function describeModel(model, requestedRef, source) {
         maxContextTokens: Number.isInteger(info.maxContextTokens)
             ? info.maxContextTokens
             : null,
+        maxOutputTokens: Number.isInteger(info.maxOutputTokens)
+            ? info.maxOutputTokens
+            : null,
+        reasoningCapture: 'required',
     });
 }
 
@@ -48,7 +52,7 @@ async function resolveRefinementModels({ suite, defaultModel, modelResolver }) {
 
     const [template, reflection] = await Promise.all([
         resolveRole('template', suite.templateModel, 'chat'),
-        resolveRole('reflection', suite.reflectionModel, 'complete'),
+        resolveRole('reflection', suite.reflectionModel, 'chat'),
     ]);
     return Object.freeze({ template, reflection });
 }

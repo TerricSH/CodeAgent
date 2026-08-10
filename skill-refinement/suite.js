@@ -20,6 +20,15 @@ function boundedInteger(value, fallback, min, max) {
     return Math.min(Math.max(number, min), max);
 }
 
+function positiveManifestInteger(value, fallback, label) {
+    if (value === undefined || value === null) return fallback;
+    const number = Number(value);
+    if (!Number.isInteger(number) || number < 1) {
+        throw new Error(`${label} must be a positive integer`);
+    }
+    return number;
+}
+
 function assertInside(root, candidate, label) {
     const base = fs.realpathSync(path.resolve(root));
     const resolved = fs.realpathSync(path.resolve(candidate));
@@ -129,6 +138,12 @@ function loadSuite(suitesRoot, suiteId, projectRoot) {
         templateModel: normalizeModelRef(manifest.templateModel, 'templateModel'),
         reflectionModel: normalizeModelRef(manifest.reflectionModel, 'reflectionModel'),
         rollouts: boundedInteger(manifest.rollouts, 4, 2, 8),
+        epochs: positiveManifestInteger(manifest.epochs, 1, 'epochs'),
+        stepsPerEpoch: positiveManifestInteger(
+            manifest.stepsPerEpoch,
+            1,
+            'stepsPerEpoch'
+        ),
         evaluation: Object.freeze({
             command: evaluationCommand,
             timeoutMs: boundedInteger(manifest.evaluation.timeoutMs, 120000, 1000, 120000),
@@ -152,6 +167,8 @@ function listSuites(suitesRoot, projectRoot) {
                 id: suite.id,
                 task: suite.task,
                 rollouts: suite.rollouts,
+                epochs: suite.epochs,
+                stepsPerEpoch: suite.stepsPerEpoch,
                 evaluationCommand: suite.evaluation.command,
                 protectedPaths: [...suite.protectedPaths],
                 skillPath: suite.skillPath,
@@ -172,4 +189,5 @@ module.exports = {
     listSuites,
     normalizeRelative,
     normalizeModelRef,
+    positiveManifestInteger,
 };

@@ -11,6 +11,11 @@ function normalizeRefinementConfig(config = {}) {
             config.suitesRoot || path.join(projectRoot, 'skill-refinement', 'suites')
         ),
         maxRuns: positiveInteger(config.maxRuns, 20),
+        modelTransportAttempts: positiveInteger(config.modelTransportAttempts, 3),
+        modelRetryDelayMs: Number.isFinite(Number(config.modelRetryDelayMs))
+            ? Math.max(0, Number(config.modelRetryDelayMs))
+            : 250,
+        modelRequestTimeoutMs: positiveInteger(config.modelRequestTimeoutMs, 120000),
     });
 }
 
