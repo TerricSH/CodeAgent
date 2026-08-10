@@ -72,7 +72,7 @@ WORKSPACE_ROOT=E:/projects/my-project
 ```
 
 When omitted, the process startup directory is used. `read_file`, `read_files`, `write_file`,
-`write_files`, and `list_dir` resolve relative paths inside this root. Lexical, absolute-path,
+`write_files`, `apply_patch`, and `list_dir` resolve relative paths inside this root. Lexical, absolute-path,
 symbolic-link, and junction
 escapes return `WORKSPACE_APPROVAL_REQUIRED` instead of executing. The Agent must then call
 `workspace__workspace_request_access`; this Tool asks the user directly and can grant exactly one
@@ -238,6 +238,7 @@ module.exports = {
 - `read_files`: 批量读取多个文件并逐个返回结果
 - `write_file`: 写入文件
 - `write_files`: 批量写入多个文件并逐个返回结果
+- `apply_patch`: 事务式新增、更新或删除多个 UTF-8 文本文件，失败时整批回滚
 - `list_dir`: 列出目录
 - `web_search`: 互联网搜索
 - `github_search`: GitHub 搜索

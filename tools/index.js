@@ -3,6 +3,7 @@ const readFile = require('./read-file');
 const readFiles = require('./read-files');
 const writeFile = require('./write-file');
 const writeFiles = require('./write-files');
+const applyPatch = require('./apply-patch');
 const listDir = require('./list-dir');
 const activateSkill = require('./activate-skill');
 const skillSearch = require('./skill-search');
@@ -24,6 +25,7 @@ const coreTools = [
     readFiles,
     writeFile,
     writeFiles,
+    applyPatch,
     listDir,
     activateSkill,
     skillSearch,
