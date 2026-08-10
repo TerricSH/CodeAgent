@@ -1,4 +1,5 @@
 const Context = require('../context');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { loadPrompt, loadPromptTemplate } = require('../prompts/loader');
 
@@ -20,7 +21,7 @@ function silentOutput() {
     };
 }
 
-function createRolloutTools(executeCommand) {
+function createRolloutTools(executeCommand, trajectoryJournal = null, trajectoryContext = null) {
     const definition = {
         type: 'function',
         function: {
@@ -40,9 +41,62 @@ function createRolloutTools(executeCommand) {
     return {
         definitions: [definition],
         has: name => name === 'sandbox_exec',
-        async execute(name, args) {
+        async execute(name, args, _context, execution = {}) {
             if (name !== 'sandbox_exec') return `Unknown rollout tool: ${name}`;
-            const task = () => executeCommand(args || {});
+            const toolCallId = execution.toolCallId || crypto.randomUUID();
+            const task = async () => {
+                trajectoryJournal?.recordSemanticEvent({
+                    eventId: crypto.randomUUID(),
+                    type: 'tool_started',
+                    recordType: 'tool-event',
+                    purpose: 'execution',
+                    content: null,
+                    payload: {
+                        toolCallId,
+                        name,
+                        arguments: args || {},
+                        context: trajectoryContext,
+                    },
+                });
+                try {
+                    const value = await executeCommand(args || {});
+                    const infrastructureFailure = ['oom', 'timeout', 'infrastructure']
+                        .includes(value?.failureType);
+                    trajectoryJournal?.recordSemanticEvent({
+                        eventId: crypto.randomUUID(),
+                        type: 'tool_result',
+                        recordType: 'tool-event',
+                        purpose: 'execution',
+                        content: JSON.stringify(value),
+                        payload: {
+                            toolCallId,
+                            name,
+                            status: infrastructureFailure ? 'failed' : 'succeeded',
+                            errorCode: infrastructureFailure
+                                ? (value?.errorCode || `SANDBOX_${value.failureType.toUpperCase()}`)
+                                : null,
+                            context: trajectoryContext,
+                        },
+                    });
+                    return value;
+                } catch (error) {
+                    trajectoryJournal?.recordSemanticEvent({
+                        eventId: crypto.randomUUID(),
+                        type: 'tool_result',
+                        recordType: 'tool-event',
+                        purpose: 'execution',
+                        content: error instanceof Error ? error.message : String(error),
+                        payload: {
+                            toolCallId,
+                            name,
+                            status: 'failed',
+                            errorCode: error?.code || null,
+                            context: trajectoryContext,
+                        },
+                    });
+                    throw error;
+                }
+            };
             const result = queue.then(task, task);
             queue = result.catch(() => {});
             return JSON.stringify(await result, null, 2);
@@ -63,7 +117,7 @@ function buildRefinementRolloutPrompt({ suite, rolloutId }) {
 
 async function runSkillRollout(options) {
     const runAgentLoop = require('../agent-runner');
-    const { model, suite, runId, rolloutId, executeCommand } = options;
+    const { model, suite, runId, rolloutId, executeCommand, trajectoryJournal } = options;
     if (!model || typeof model.chat !== 'function') {
         throw new Error('Skill Refinement rollouts require a model capability with chat()');
     }
@@ -76,11 +130,21 @@ async function runSkillRollout(options) {
         context.setMaxContextTokens(info.maxContextTokens);
     }
     context.addUser(suite.task);
-    const toolRegistry = createRolloutTools(executeCommand);
+    const trajectoryContext = {
+        runId,
+        rolloutId,
+        suiteId: suite.id,
+        ...(options.trajectoryContext || {}),
+    };
+    const toolRegistry = createRolloutTools(executeCommand, trajectoryJournal, trajectoryContext);
     const reply = await runAgentLoop(context, silentOutput(), {
         client: model,
         toolRegistry,
         tools: toolRegistry.definitions,
+        modelOptions: {
+            purpose: 'execution',
+            trajectoryContext,
+        },
     });
     return {
         reply: reply || '',

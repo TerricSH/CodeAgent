@@ -145,6 +145,14 @@ function buildProvider(vendorName, ifaceName, modelName) {
         'maxOutputTokens',
         'maxOutputTokensEnv'
     );
+    const requestOptions = {
+        ...(ic.requestOptions && typeof ic.requestOptions === 'object' ? ic.requestOptions : {}),
+        ...(catalogEntry?.requestOptions && typeof catalogEntry.requestOptions === 'object'
+            ? catalogEntry.requestOptions
+            : {}),
+    };
+    const reasoningRequired = catalogEntry?.reasoningRequired === true
+        || (catalogEntry?.reasoningRequired === undefined && ic.reasoningRequired === true);
 
     // 接口实现直接就是 client：携带连接 + model + maxContextTokens，并自带 chat()。
     // 不再套一层 Provider 转发，调用链更短。
@@ -155,6 +163,8 @@ function buildProvider(vendorName, ifaceName, modelName) {
         maxContextTokens,
         anthropicVersion: ic.anthropicVersion,
         maxOutputTokens,
+        requestOptions,
+        reasoningRequired,
         accountType: ic.accountType,
     });
 }

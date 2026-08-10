@@ -1,32 +1,32 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
 const {
-    normalizeSandboxConfig,
-    sessionKey,
-} = require('../../sandbox/policy');
-const { DockerSandboxExecutor, cleanResult } = require('../../sandbox/executor');
-const { pathIsInside, ensureContainedDirectory } = require('../../sandbox/workspace');
+    DockerClient,
+    SandboxPool,
+    policy: { normalizeSandboxConfig, sessionKey },
+    workspace: { pathIsInside, ensureContainedDirectory },
+} = require('../../sandbox');
 
-const STATE_VERSION = 3;
+const STATE_VERSION = 4;
 
 class DockerSandboxService {
     constructor(sessionId, config = {}, dependencies = {}) {
         this.sessionId = String(sessionId || 'anonymous');
         this.session = sessionKey(this.sessionId);
         this.config = normalizeSandboxConfig(config);
-        this.executor = dependencies.executor || new DockerSandboxExecutor({
-            config: this.config,
+        this.client = dependencies.client
+            || new DockerClient({ command: this.config.command });
+        this.pool = dependencies.pool || new SandboxPool(this.config, {
             session: this.session,
-            client: dependencies.client,
+            client: this.client,
         });
-        this.client = this.executor.client;
         this.sessionRoot = path.join(this.config.sandboxRoot, this.session);
         this.workspace = path.join(this.sessionRoot, 'workspace');
         this.executions = 0;
         this.dirty = false;
         this._queue = Promise.resolve();
-        this._activeContainers = this.executor.activeContainers;
+        this._snapshot = null;
+        this._lease = null;
     }
 
     _ensureWorkspace() {
@@ -39,14 +39,41 @@ class DockerSandboxService {
         return next;
     }
 
+    async _ensureLease() {
+        if (this._lease) return this._lease;
+        const workspace = this._ensureWorkspace();
+        this._snapshot = await this.pool.prepareSnapshot({
+            source: workspace,
+            snapshotId: `session:${this.session}`,
+        });
+        this._lease = await this.pool.acquire(this._snapshot, {
+            sessionId: this.sessionId,
+            purpose: 'interactive-sandbox',
+        });
+        return this._lease;
+    }
+
+    async _disposeLease() {
+        if (this._lease) {
+            await this._lease.dispose();
+            this._lease = null;
+        }
+        if (this._snapshot) {
+            await this.pool.disposeSnapshot(this._snapshot);
+            this._snapshot = null;
+        }
+    }
+
     async status() {
-        const status = await this.executor.status();
+        const status = await this.pool.status();
         if (!status.available) {
             return {
                 available: false,
                 imageReady: false,
                 image: status.image,
                 workspace: this.workspace,
+                pool: status.pool,
+                resources: status.resources,
                 error: status.error,
             };
         }
@@ -58,19 +85,16 @@ class DockerSandboxService {
             imageId: status.imageId,
             workspace: this.workspace,
             network: this.config.network,
+            pool: status.pool,
+            resources: status.resources,
         };
     }
 
     execute(args = {}) {
         return this._serialize(async () => {
-            const workspace = this._ensureWorkspace();
-            const containerName = `codeagent-sbx-${this.session}-${crypto.randomUUID().slice(0, 8)}`;
-            const result = await this.executor.execute({
-                command: args.command,
-                timeoutMs: args.timeoutMs,
-                containerName,
-                workspace,
-            });
+            const lease = await this._ensureLease();
+            const result = await lease.exec(args);
+            await lease.exportWorkspace(this.workspace);
             this.executions += 1;
             this.dirty = true;
             return { ...result, execution: this.executions };
@@ -79,6 +103,7 @@ class DockerSandboxService {
 
     reset() {
         return this._serialize(async () => {
+            await this._disposeLease();
             const root = path.resolve(this.config.sandboxRoot);
             const sessionRoot = path.resolve(this.sessionRoot);
             if (!pathIsInside(root, sessionRoot) || sessionRoot === root) {
@@ -94,7 +119,7 @@ class DockerSandboxService {
     hydrate(raw) {
         if (!raw) return;
         const envelope = JSON.parse(raw);
-        if (!envelope || !envelope.data || ![1, 2, STATE_VERSION].includes(envelope.version)) {
+        if (!envelope || !envelope.data || ![1, 2, 3, STATE_VERSION].includes(envelope.version)) {
             throw new Error('Invalid docker-sandbox state envelope');
         }
         this.executions = Number.isInteger(envelope.data.executions) ? envelope.data.executions : 0;
@@ -110,8 +135,9 @@ class DockerSandboxService {
     }
 
     async dispose() {
-        await this.executor.dispose();
+        await this._disposeLease();
+        await this.pool.dispose();
     }
 }
 
-module.exports = { DockerSandboxService, cleanResult, ensureContainedDirectory };
+module.exports = { DockerSandboxService, ensureContainedDirectory };

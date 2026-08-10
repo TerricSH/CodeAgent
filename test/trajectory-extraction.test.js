@@ -136,7 +136,7 @@ test('trajectory_extract cleans a saved JSONL file without overwriting the raw p
     }
 });
 
-test('Skill Refinement and trajectory extraction are joined only by the saved file format', () => {
+test('external trajectory extraction remains decoupled from native refinement cleaning', () => {
     const refinementSources = [
         'service.js',
         'orchestrator.js',

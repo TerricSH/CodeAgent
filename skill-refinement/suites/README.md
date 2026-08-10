@@ -29,6 +29,8 @@ Example `suite.json`:
   "baseline": ".",
   "skillPath": "seed-skill.md",
   "rollouts": 4,
+  "epochs": 2,
+  "stepsPerEpoch": 3,
   "protectedPaths": ["test", "package.json", "package-lock.json"],
   "evaluation": {
     "command": "npm test",
@@ -43,11 +45,17 @@ Rules:
 - `baseline` is relative to the Workspace root and cannot escape it.
 - `skillPath` is required and must stay inside the suite directory.
 - `templateModel` selects the model that executes candidate Rollouts.
-- `reflectionModel` selects the model that reads scored evidence and writes `refined-skill.md`.
+- `reflectionModel` selects the model that reads the cleaned, scored trajectory and returns a
+  structured Skill Patch.
 - Model references use `vendor[@interface][/model]`. API keys remain in provider configuration;
   never put credentials in a suite manifest.
 - Either model field may be omitted to use the current session model for that role.
 - `rollouts` is clamped to 2-8.
+- `epochs` and `stepsPerEpoch` are positive integers. Their product is the configured number of
+  candidate iterations; the runtime does not add an arbitrary convergence or generation cutoff.
 - The evaluator and protected paths are fixed by the suite.
 - A protected-path change scores `-1`; other candidates score `1` on pass and `0` on failure.
-- Ties prefer smaller changes and then faster evaluation.
+- A candidate is committed only when its aggregate batch score is strictly greater than the
+  incumbent score. A tie or regression is restored from the session Git `HEAD`.
+- Both model endpoints must support explicit reasoning/thinking output. Local and cloud endpoints
+  use the same provider API configuration.

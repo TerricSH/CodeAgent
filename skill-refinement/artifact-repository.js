@@ -22,8 +22,14 @@ class RefinementArtifactRepository {
         };
     }
 
-    writeRollout(artifactRoot, rolloutId, record) {
-        this._writeJson(path.join(artifactRoot, 'rollouts', rolloutId, 'record.json'), record);
+    writeRollout(artifactRoot, rolloutId, record, batchId = null) {
+        const root = batchId
+            ? path.join(artifactRoot, 'batches', this._segment(batchId, 'batchId'), 'rollouts')
+            : path.join(artifactRoot, 'rollouts');
+        this._writeJson(
+            path.join(root, this._segment(rolloutId, 'rolloutId'), 'record.json'),
+            record
+        );
     }
 
     writeCandidate(artifactRoot, content) {
@@ -37,6 +43,56 @@ class RefinementArtifactRepository {
         const content = records.map(record => JSON.stringify(record)).join('\n');
         fs.writeFileSync(evidencePath, content ? `${content}\n` : '', 'utf8');
         return evidencePath;
+    }
+
+    appendRawTrajectories(artifactRoot, records) {
+        const evidencePath = path.join(artifactRoot, 'raw-rollout-trajectories.jsonl');
+        fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+        const content = records.map(record => JSON.stringify(record)).join('\n');
+        if (content) fs.appendFileSync(evidencePath, `${content}\n`, 'utf8');
+        else if (!fs.existsSync(evidencePath)) fs.writeFileSync(evidencePath, '', 'utf8');
+        return evidencePath;
+    }
+
+    writeStep(artifactRoot, epoch, step, record) {
+        const directory = path.join(
+            artifactRoot,
+            'steps',
+            `epoch-${String(epoch).padStart(3, '0')}`,
+            `step-${String(step).padStart(3, '0')}`
+        );
+        this._writeJson(path.join(directory, 'record.json'), record);
+        return path.join(directory, 'record.json');
+    }
+
+    removeWorkspace(artifactRoot, workspace, metadata = {}) {
+        if (!workspace) return false;
+        const root = path.resolve(artifactRoot);
+        const target = path.resolve(workspace);
+        if (!pathIsInside(root, target) || target === root || path.basename(target) !== 'workspace') {
+            throw new Error('Refusing to remove a rollout workspace outside its artifact root');
+        }
+        if (fs.existsSync(target)) {
+            const stat = fs.lstatSync(target);
+            if (stat.isSymbolicLink()) {
+                throw new Error('Refusing to remove a symbolic-link rollout workspace');
+            }
+            const realRoot = fs.realpathSync(root);
+            const realTarget = fs.realpathSync(target);
+            if (!pathIsInside(realRoot, realTarget)) {
+                throw new Error('Refusing to remove a rollout workspace that escaped its artifact root');
+            }
+        }
+        fs.rmSync(target, { recursive: true, force: true });
+        const retentionPath = path.join(root, 'workspace-retention.jsonl');
+        fs.appendFileSync(retentionPath, `${JSON.stringify({
+            schemaVersion: 1,
+            recordType: 'workspace-removed',
+            createdAt: new Date().toISOString(),
+            workspace: target,
+            ...metadata,
+        })}\n`, 'utf8');
+        return true;
     }
 
     writeEvidence(artifactRoot, records) {
@@ -82,6 +138,14 @@ class RefinementArtifactRepository {
     _writeJson(file, value) {
         fs.mkdirSync(path.dirname(file), { recursive: true });
         fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    }
+
+    _segment(value, label) {
+        const segment = String(value || '');
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(segment)) {
+            throw new Error(`${label} is invalid`);
+        }
+        return segment;
     }
 }
 

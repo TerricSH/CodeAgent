@@ -13,14 +13,25 @@ class OpenAICompatible extends BaseInterface {
     // 可覆写：构建请求参数（厂商可加自家特殊参数）。
     buildParams(messages, options) {
         const params = {
+            ...this.requestOptions,
+            ...(options.providerOptions || {}),
             model: this.model,
             messages,
-            temperature: options.temperature ?? 1.0,
-            top_p: options.topP ?? 0.95,
             stream: true,
         };
+        if (options.temperature != null) params.temperature = options.temperature;
+        else if (!options.reasoning?.enabled && params.temperature === undefined) {
+            params.temperature = 1.0;
+        }
+        if (options.topP != null) params.top_p = options.topP;
+        else if (!options.reasoning?.enabled && params.top_p === undefined) params.top_p = 0.95;
         if (options.tools && options.tools.length > 0) {
             params.tools = options.tools;
+        }
+        if (options.reasoning?.enabled
+            && params.reasoning_effort === undefined
+            && params.reasoning === undefined) {
+            params.reasoning_effort = options.reasoning.effort || 'medium';
         }
         return params;
     }
@@ -30,18 +41,28 @@ class OpenAICompatible extends BaseInterface {
             throw new Error('未配置模型：请设置 MODEL_NAME 环境变量，或为该 agent 指定 model。');
         }
 
-        const stream = await this.client.chat.completions.create(this.buildParams(messages, options));
+        const stream = await this.client.chat.completions.create(
+            this.buildParams(messages, options),
+            options.signal ? { signal: options.signal } : undefined
+        );
         const toolCalls = {};
 
         for await (const chunk of stream) {
             const delta = chunk.choices[0]?.delta;
             if (!delta) continue;
 
-            if (delta.reasoning_content) {
-                yield { type: 'thinking', content: delta.reasoning_content };
+            const reasoning = delta.reasoning_content || delta.reasoning;
+            if (reasoning) {
+                yield {
+                    type: 'thinking',
+                    content: typeof reasoning === 'string'
+                        ? reasoning
+                        : JSON.stringify(reasoning),
+                    raw: chunk,
+                };
             }
             if (delta.content) {
-                yield { type: 'content', content: delta.content };
+                yield { type: 'content', content: delta.content, raw: chunk };
             }
             if (delta.tool_calls) {
                 for (const tc of delta.tool_calls) {
@@ -65,7 +86,7 @@ class OpenAICompatible extends BaseInterface {
                     name: tc.name,
                     arguments: safeParseArgs(tc.arguments),
                 }));
-                yield { type: 'tool_calls', calls };
+                yield { type: 'tool_calls', calls, raw: chunk };
             }
         }
     }

@@ -116,6 +116,8 @@ class ResponsesCompatible extends BaseInterface {
     buildParams(messages, options = {}) {
         const converted = toResponsesInput(messages);
         const params = {
+            ...this.requestOptions,
+            ...(options.providerOptions || {}),
             model: this.model,
             input: converted.input,
             stream: true,
@@ -124,6 +126,12 @@ class ResponsesCompatible extends BaseInterface {
 
         const tools = toResponsesTools(options.tools);
         if (tools.length > 0) params.tools = tools;
+        if (options.reasoning?.enabled && params.reasoning === undefined) {
+            params.reasoning = {
+                effort: options.reasoning.effort || 'medium',
+                summary: options.reasoning.summary || 'detailed',
+            };
+        }
         return params;
     }
 
@@ -141,12 +149,20 @@ class ResponsesCompatible extends BaseInterface {
                 Authorization: `Bearer ${this.apiKey}`,
                 'Content-Type': 'application/json',
             },
+            signal: options.signal,
             body: JSON.stringify(this.buildParams(messages, options)),
         });
 
         if (!response.ok) {
             const body = await response.text();
-            throw new Error(`OpenAI Responses API failed (${response.status}): ${body}`);
+            const error = new Error(`OpenAI Responses API failed (${response.status}): ${body}`);
+            error.status = response.status;
+            throw error;
+        }
+        if (!response.body) {
+            const error = new Error('OpenAI Responses API returned no event stream');
+            error.code = 'MODEL_STREAM_UNAVAILABLE';
+            throw error;
         }
 
         const toolCalls = new Map();
@@ -154,13 +170,13 @@ class ResponsesCompatible extends BaseInterface {
 
         for await (const event of parseEventStream(response)) {
             if (event.type === 'response.output_text.delta' && event.delta) {
-                yield { type: 'content', content: event.delta };
+                yield { type: 'content', content: event.delta, raw: event };
                 continue;
             }
 
             if ((event.type === 'response.reasoning_summary_text.delta'
                 || event.type === 'response.reasoning_text.delta') && event.delta) {
-                yield { type: 'thinking', content: event.delta };
+                yield { type: 'thinking', content: event.delta, raw: event };
                 continue;
             }
 
@@ -184,7 +200,10 @@ class ResponsesCompatible extends BaseInterface {
 
             if (event.type === 'error' || event.type === 'response.failed') {
                 const error = event.error || event.response?.error || {};
-                throw new Error(error.message || 'OpenAI Responses API stream failed.');
+                const failure = new Error(error.message || 'OpenAI Responses API stream failed.');
+                failure.status = event.response?.status || error.status || null;
+                failure.code = error.code || null;
+                throw failure;
             }
 
             if (event.type === 'response.completed' && toolCalls.size > 0) {
@@ -196,6 +215,7 @@ class ResponsesCompatible extends BaseInterface {
                         name: call.name,
                         arguments: safeParseArgs(call.arguments),
                     })),
+                    raw: event,
                 };
             }
         }
@@ -208,6 +228,7 @@ class ResponsesCompatible extends BaseInterface {
                     name: call.name,
                     arguments: safeParseArgs(call.arguments),
                 })),
+                raw: null,
             };
         }
     }

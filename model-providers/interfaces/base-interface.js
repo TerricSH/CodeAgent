@@ -11,7 +11,15 @@ function defaultOutputReserve(maxContextTokens) {
 }
 
 class BaseInterface {
-    constructor({ apiKey, baseURL, model, maxContextTokens, maxOutputTokens } = {}) {
+    constructor({
+        apiKey,
+        baseURL,
+        model,
+        maxContextTokens,
+        maxOutputTokens,
+        requestOptions,
+        reasoningRequired,
+    } = {}) {
         this.apiKey = apiKey || null;
         this.baseURL = baseURL || null;
         this.model = model || null;
@@ -22,6 +30,10 @@ class BaseInterface {
         this.maxOutputTokens = Number.isInteger(maxOutputTokens) && maxOutputTokens > 0
             ? maxOutputTokens
             : defaultOutputReserve(this.maxContextTokens);
+        this.requestOptions = requestOptions && typeof requestOptions === 'object'
+            ? Object.freeze({ ...requestOptions })
+            : Object.freeze({});
+        this.reasoningRequired = reasoningRequired === true;
     }
 
     // 子类必须实现：async *chat(messages, options) -> AsyncGenerator<event>

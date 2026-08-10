@@ -18,6 +18,8 @@ class AnthropicCompatible extends BaseInterface {
     buildBody(messages, options) {
         const { system, messages: anthropicMessages } = translateMessages(messages);
         const body = {
+            ...this.requestOptions,
+            ...(options.providerOptions || {}),
             model: this.model,
             max_tokens: options.maxTokens || this.maxOutputTokens,
             messages: anthropicMessages,
@@ -28,6 +30,18 @@ class AnthropicCompatible extends BaseInterface {
         if (options.topP != null) body.top_p = options.topP;
         if (options.tools && options.tools.length > 0) {
             body.tools = translateTools(options.tools);
+        }
+        if (options.reasoning?.enabled && body.thinking === undefined) {
+            if (body.max_tokens <= 1024) {
+                throw new Error('Anthropic reasoning requires max_tokens greater than 1024');
+            }
+            body.thinking = {
+                type: 'enabled',
+                budget_tokens: Math.min(
+                    body.max_tokens - 1,
+                    Math.max(1024, Number(options.reasoning.budgetTokens) || 2048)
+                ),
+            };
         }
         return body;
     }
@@ -47,12 +61,16 @@ class AnthropicCompatible extends BaseInterface {
                 'anthropic-version': this.anthropicVersion,
                 'content-type': 'application/json',
             },
+            signal: options.signal,
             body: JSON.stringify(this.buildBody(messages, options)),
         });
 
         if (!response.ok || !response.body) {
             const text = await response.text().catch(() => '');
-            throw new Error(`Anthropic 请求失败 (${response.status}): ${text}`);
+            const error = new Error(`Anthropic 请求失败 (${response.status}): ${text}`);
+            error.status = response.status;
+            if (response.ok && !response.body) error.code = 'MODEL_STREAM_UNAVAILABLE';
+            throw error;
         }
 
         // tool_use 累积：content block index -> { id, name, json(partial) }
@@ -69,6 +87,13 @@ class AnthropicCompatible extends BaseInterface {
             }
             const type = json.type || event;
 
+            if (type === 'error') {
+                const error = new Error(json.error?.message || 'Anthropic stream failed');
+                error.status = json.error?.status || null;
+                error.code = json.error?.type || null;
+                throw error;
+            }
+
             if (type === 'content_block_start') {
                 const cb = json.content_block;
                 if (cb && cb.type === 'tool_use') {
@@ -79,9 +104,9 @@ class AnthropicCompatible extends BaseInterface {
                 const d = json.delta;
                 if (!d) continue;
                 if (d.type === 'text_delta' && d.text) {
-                    yield { type: 'content', content: d.text };
+                    yield { type: 'content', content: d.text, raw: json };
                 } else if (d.type === 'thinking_delta' && d.thinking) {
-                    yield { type: 'thinking', content: d.thinking };
+                    yield { type: 'thinking', content: d.thinking, raw: json };
                 } else if (d.type === 'input_json_delta' && toolUses[json.index]) {
                     toolUses[json.index].json += d.partial_json || '';
                 }
@@ -92,7 +117,7 @@ class AnthropicCompatible extends BaseInterface {
                         name: t.name,
                         arguments: safeJSON(t.json) || {},
                     }));
-                    yield { type: 'tool_calls', calls };
+                    yield { type: 'tool_calls', calls, raw: json };
                 }
             }
         }

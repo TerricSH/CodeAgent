@@ -1,44 +1,47 @@
-const crypto = require('node:crypto');
-const { sessionKey } = require('../sandbox/policy');
-const { DockerSandboxExecutor, cleanResult } = require('../sandbox/executor');
-const { ensureContainedDirectory } = require('../sandbox/workspace');
+const {
+    DockerClient,
+    SandboxPool,
+    policy: { sessionKey },
+} = require('../sandbox');
 
 class SandboxEvaluator {
     constructor(sessionId, config, dependencies = {}) {
         this.session = sessionKey(sessionId);
         this.config = config;
-        this.executor = dependencies.executor || new DockerSandboxExecutor({
-            config,
+        this.client = dependencies.client || new DockerClient({ command: config.command });
+        this.pool = dependencies.pool || new SandboxPool(config, {
             session: this.session,
-            client: dependencies.client,
+            client: this.client,
         });
-        this.client = this.executor.client;
-        this._activeContainers = this.executor.activeContainers;
     }
 
     async status() {
-        return this.executor.status();
+        return this.pool.status();
     }
 
-    async execute(args, workspace, metadata) {
-        const realWorkspace = ensureContainedDirectory(
-            this.config.sandboxRoot,
-            workspace,
-            'Skill Refinement rollout workspace'
-        );
-        const containerName = `codeagent-refine-${this.session}-${metadata.rolloutId}-${crypto.randomUUID().slice(0, 8)}`;
-        const result = await this.executor.execute({
-            command: args.command,
-            timeoutMs: args.timeoutMs,
-            containerName,
-            workspace: realWorkspace,
-        });
+    prepareSnapshot(source, snapshotId) {
+        return this.pool.prepareSnapshot({ source, snapshotId });
+    }
+
+    acquire(snapshot, metadata) {
+        return this.pool.acquire(snapshot, metadata);
+    }
+
+    async execute(args, lease, metadata) {
+        if (!lease || typeof lease.exec !== 'function') {
+            throw new Error('SandboxEvaluator.execute requires a SandboxLease');
+        }
+        const result = await lease.exec(args);
         return { ...result, ...metadata };
     }
 
+    disposeSnapshot(snapshot) {
+        return this.pool.disposeSnapshot(snapshot);
+    }
+
     async dispose() {
-        await this.executor.dispose();
+        await this.pool.dispose();
     }
 }
 
-module.exports = { SandboxEvaluator, cleanResult };
+module.exports = { SandboxEvaluator };

@@ -1,8 +1,11 @@
-# Skill to refine
+# Current Skill
 {{skill}}
 
 # Evaluation task
 {{task}}
 
-# Scored rollout evidence
+# Optimization position
+Epoch {{epoch}}, step {{step}}, trajectory chunk {{chunk}}
+
+# Cleaned trajectory evidence
 {{evidence}}

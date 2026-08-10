@@ -301,13 +301,14 @@ Embedding 与 rerank 由受管的本机 Python 子进程执行，强制离线模
 npm run sandbox:build
 ```
 
-沙盒按命令启动临时容器，工作目录位于 `.code/sandboxes/<session>/workspace`。默认策略包括：
+沙盒由公共 `SandboxPool` 管理。每个工作区使用独立、可暂停的持久容器和 Docker CoW 写层；
+模型生成期间容器保持停止，仅在工具/评测命令期间启动。默认策略包括：
 
 - 禁用网络；
-- 根文件系统只读；
 - 删除全部 Linux capabilities，并禁止获取新权限；
 - 非 root 用户；
-- CPU、内存、进程数、执行时间和输出大小限制；
+- 并发命令、CPU、内存硬限制/预留、写层、磁盘高水位、进程数、执行时间和输出大小限制；
+- OOM 后自动将活动并发减半；
 - 不挂载项目根目录、`.env`、`.git` 或 Docker Socket。
 
 插件提供：
@@ -320,14 +321,16 @@ npm run sandbox:build
 
 Skill Refinement 是 SkillOpt 风格的技能精炼能力，不训练模型权重，也不管理梯度、优化器或
 checkpoint。宿主在 [`skill-refinement/suites/`](skill-refinement/suites/README.md) 中固定任务、
-初始 Skill、评测命令和保护路径；`skill_refinement` Tool 从同一安全快照启动多个隔离 Rollout，
-执行固定评测并排名，再根据完整评测证据生成 `refined-skill.md` 候选。
+初始 Skill、评测命令和保护路径；`skill_refinement` Tool 从同一安全快照并行运行隔离批次，
+通过结构化 Patch 迭代 Skill，并且只接受聚合分数严格提升的候选。整个优化会话只使用一个临时
+Git 仓库管理 `SKILL.md` 版本；导出历史后删除 `.git`，不会修改项目仓库或源 Skill。
 
-Suite 可分别设置 `templateModel` 和 `reflectionModel`：前者执行 Rollout，后者根据评分证据反思并
-生成候选。模型引用由运行时显式解析，不会切换主会话模型；省略时对应角色回退到当前会话模型。
+Suite 可分别设置 `templateModel` 和 `reflectionModel`：前者执行 Rollout，后者读取清洗后的完整
+评分轨迹并生成结构化 Patch。模型通过现有 API provider 接入，可部署在云端或本地服务；两个角色
+都必须返回显式 reasoning/thinking。模型引用不会切换主会话模型。
 
 Tool 支持 `status`、`list_suites`、`refine`、`history` 和 `result`。只有主 agent 可以启动
-`refine`。源 Skill 不会被自动覆盖，结果和 `raw-rollout-trajectories.jsonl` 只写入：
+`refine`。源 Skill 不会被自动覆盖；传输尝试、原始语义事件、清洗轨迹、批次记录和版本导出只写入：
 
 ```text
 .code/sandboxes/<session>/skill-refinement-runs/<run-id>/
@@ -337,8 +340,8 @@ Tool 支持 `status`、`list_suites`、`refine`、`history` 和 `result`。只�
 
 ### Trajectory Extraction Tool
 
-`trajectory_extract` 不参与 Skill Refinement 的运行流程。Skill Refinement 只保存完整原始
-Rollout；需要清洗时，再把 `rawTrajectoryPath` 作为 `trajectory_extract.sourcePath` 传入。
+Skill Refinement 已原生生成反思所需的无重试噪声清洗轨迹；`trajectory_extract` 不参与优化循环，
+但仍可在运行后读取其原始 JSON/JSONL 做独立分析。
 Tool 会将消息、LLM 回复、工具调用/结果、评测、diff 和 reward 转成带来源消息索引与 span ID
 的结构化 JSON，并写入独立的 `*.cleaned.json`，不会覆盖原始过程文件。多条 Rollout 会额外生成
 带证据 span ID 的横向比较；其中关联与 verifier link 仅表示时序/启发式关系，不宣称因果。

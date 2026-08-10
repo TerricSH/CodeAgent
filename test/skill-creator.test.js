@@ -26,11 +26,11 @@ test('skill-creator keeps creation, rollout, verification, and reflection roles 
     assert.match(prompt, /templateModel/);
     assert.match(prompt, /reflectionModel/);
     assert.match(prompt, /skill_refinement/);
-    assert.match(prompt, /two consecutive generations/);
-    assert.match(prompt, /candidate returned[\s\S]+is unverified until/i);
-    assert.match(prompt, /Do not select the last newly generated candidate/i);
+    assert.match(prompt, /call `refine` once/i);
+    assert.match(prompt, /aggregate batch score is strictly greater/i);
+    assert.match(prompt, /temporary Git versions/i);
     assert.match(prompt, /do\s+not describe it as reinforcement-learning model training/i);
-    assert.match(prompt, /place the best verified seed[\s\S]+`skills\/<name>\/`/i);
+    assert.match(prompt, /Place the returned best verified Skill[\s\S]+`skills\/<name>\/`/i);
     assert.match(prompt, /Never overwrite an existing Skill without explicit user approval/i);
 });
 
