@@ -1,58 +1,32 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { DockerClient } = require('../../sandbox/docker-client');
 const {
     normalizeSandboxConfig,
     sessionKey,
-    clampTimeout,
-    buildRunArgs,
 } = require('../../sandbox/policy');
+const { DockerSandboxExecutor, cleanResult } = require('../../sandbox/executor');
+const { pathIsInside, ensureContainedDirectory } = require('../../sandbox/workspace');
 
 const STATE_VERSION = 3;
-
-function cleanResult(result) {
-    return {
-        ok: result.exitCode === 0 && !result.timedOut && !result.error,
-        exitCode: result.exitCode,
-        signal: result.signal || null,
-        timedOut: Boolean(result.timedOut),
-        stdout: result.stdout || '',
-        stderr: result.stderr || '',
-        truncated: Boolean(result.truncated),
-        error: result.error || null,
-        errorCode: result.errorCode || null,
-        durationMs: result.durationMs,
-    };
-}
-
-function pathIsInside(root, candidate) {
-    return candidate === root || candidate.startsWith(`${root}${path.sep}`);
-}
-
-function ensureContainedDirectory(root, candidate, label = 'Sandbox directory') {
-    fs.mkdirSync(root, { recursive: true });
-    const realRoot = fs.realpathSync(path.resolve(root));
-    fs.mkdirSync(candidate, { recursive: true });
-    const realCandidate = fs.realpathSync(path.resolve(candidate));
-    if (!pathIsInside(realRoot, realCandidate)) {
-        throw new Error(`${label} escaped its configured root`);
-    }
-    return realCandidate;
-}
 
 class DockerSandboxService {
     constructor(sessionId, config = {}, dependencies = {}) {
         this.sessionId = String(sessionId || 'anonymous');
         this.session = sessionKey(this.sessionId);
         this.config = normalizeSandboxConfig(config);
-        this.client = dependencies.client || new DockerClient({ command: this.config.command });
+        this.executor = dependencies.executor || new DockerSandboxExecutor({
+            config: this.config,
+            session: this.session,
+            client: dependencies.client,
+        });
+        this.client = this.executor.client;
         this.sessionRoot = path.join(this.config.sandboxRoot, this.session);
         this.workspace = path.join(this.sessionRoot, 'workspace');
         this.executions = 0;
         this.dirty = false;
         this._queue = Promise.resolve();
-        this._activeContainers = new Set();
+        this._activeContainers = this.executor.activeContainers;
     }
 
     _ensureWorkspace() {
@@ -66,26 +40,22 @@ class DockerSandboxService {
     }
 
     async status() {
-        const version = await this.client.version({ timeoutMs: 5000, maxOutputBytes: 64 * 1024 });
-        if (version.error || version.exitCode !== 0) {
+        const status = await this.executor.status();
+        if (!status.available) {
             return {
                 available: false,
                 imageReady: false,
-                image: this.config.image,
+                image: status.image,
                 workspace: this.workspace,
-                error: version.error || version.stderr || 'Docker Engine is unavailable',
+                error: status.error,
             };
         }
-        const image = await this.client.inspectImage(this.config.image, {
-            timeoutMs: 5000,
-            maxOutputBytes: 64 * 1024,
-        });
         return {
             available: true,
-            version: (version.stdout || '').trim(),
-            imageReady: image.exitCode === 0 && !image.error,
-            image: this.config.image,
-            imageId: image.exitCode === 0 ? (image.stdout || '').trim() : null,
+            version: status.version,
+            imageReady: status.imageReady,
+            image: status.image,
+            imageId: status.imageId,
             workspace: this.workspace,
             network: this.config.network,
         };
@@ -93,38 +63,17 @@ class DockerSandboxService {
 
     execute(args = {}) {
         return this._serialize(async () => {
-            const command = typeof args.command === 'string' ? args.command.trim() : '';
-            if (!command) throw new Error('command is required');
-            if (command.length > 32768) throw new Error('command exceeds the 32768 character limit');
             const workspace = this._ensureWorkspace();
             const containerName = `codeagent-sbx-${this.session}-${crypto.randomUUID().slice(0, 8)}`;
-            const dockerArgs = buildRunArgs({
-                config: this.config,
+            const result = await this.executor.execute({
+                command: args.command,
+                timeoutMs: args.timeoutMs,
                 containerName,
-                session: this.session,
                 workspace,
-                command,
             });
-
-            this._activeContainers.add(containerName);
-            let result;
-            try {
-                result = await this.client.run(dockerArgs, {
-                    timeoutMs: clampTimeout(args.timeoutMs, this.config),
-                    maxOutputBytes: this.config.maxOutputBytes,
-                });
-            } finally {
-                this._activeContainers.delete(containerName);
-            }
-            if (result.timedOut) {
-                await this.client.removeContainer(containerName, {
-                    timeoutMs: 5000,
-                    maxOutputBytes: 64 * 1024,
-                });
-            }
             this.executions += 1;
             this.dirty = true;
-            return { ...cleanResult(result), execution: this.executions };
+            return { ...result, execution: this.executions };
         });
     }
 
@@ -161,12 +110,7 @@ class DockerSandboxService {
     }
 
     async dispose() {
-        const names = [...this._activeContainers];
-        await Promise.all(names.map(name => this.client.removeContainer(name, {
-            timeoutMs: 5000,
-            maxOutputBytes: 64 * 1024,
-        })));
-        this._activeContainers.clear();
+        await this.executor.dispose();
     }
 }
 

@@ -1,7 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { sessionKey } = require('../sandbox/policy');
-const { pathIsInside, ensureContainedDirectory } = require('./workspace');
+const { pathIsInside, ensureContainedDirectory } = require('../sandbox/workspace');
 
 class RefinementArtifactRepository {
     constructor(sessionId, config) {
