@@ -1,7 +1,9 @@
 const researcher = require('./researcher');
 const coder = require('./coder');
+const tester = require('./tester');
+const coverageVerifier = require('./coverage-verifier');
 
-const agents = [researcher, coder];
+const agents = [researcher, coder, tester, coverageVerifier];
 
 const registry = {};
 for (const a of agents) {

@@ -26,6 +26,8 @@ const SYSTEM_PROMPT_FILES = [
     'prompts/system-policy.md',
     'agents/coder/prompt.md',
     'agents/researcher/prompt.md',
+    'agents/tester/prompt.md',
+    'agents/coverage-verifier/prompt.md',
     'plugins/auto-compaction/prompts/summary-system.md',
     'plugins/memory/prompts/resume-system.md',
     'plugins/memory/prompts/recall-system.md',
