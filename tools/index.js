@@ -16,6 +16,8 @@ const trajectoryExtract = require('./trajectory-extract');
 const imageInspect = require('./image-inspect');
 const { selectCapabilities } = require('../runtime/capabilities');
 
+const TOOL_EFFECTS = Object.freeze(['read', 'control', 'write', 'execute', 'external']);
+
 const coreTools = [
     runCommand,
     readFile,
@@ -54,8 +56,14 @@ function createRegistry(extraTools = [], options = {}) {
         if (Object.prototype.hasOwnProperty.call(handlers, name)) {
             throw new Error(`Duplicate tool registration: ${name}`);
         }
+        if (tool.effects !== undefined
+            && typeof tool.effects !== 'function'
+            && !TOOL_EFFECTS.includes(tool.effects)) {
+            throw new TypeError(`Tool "${name}" declares an invalid effects value`);
+        }
         handlers[name] = {
             handler: tool.handler,
+            effects: tool.effects,
             capabilities: selectCapabilities(
                 availableCapabilities,
                 tool.capabilities,
@@ -73,14 +81,43 @@ function createRegistry(extraTools = [], options = {}) {
         return Object.keys(handlers);
     }
 
+    function describe(name, args = {}) {
+        const entry = handlers[name];
+        if (!entry) return Object.freeze({ name, effects: 'unknown' });
+        const effects = typeof entry.effects === 'function'
+            ? entry.effects(args || {})
+            : (entry.effects || 'unknown');
+        return Object.freeze({
+            name,
+            effects: TOOL_EFFECTS.includes(effects) ? effects : 'unknown',
+        });
+    }
+
+    async function preflight(calls = [], context) {
+        const batch = Object.freeze((Array.isArray(calls) ? calls : []).map(call => Object.freeze({
+            id: call?.id || null,
+            ...describe(call?.name, call?.arguments || {}),
+        })));
+        if (typeof options.onBeforeBatch === 'function') {
+            await options.onBeforeBatch(context, batch);
+        }
+        return batch;
+    }
+
     return {
         definitions: registeredTools.map(t => t.definition),
         prompts: registeredTools.map(t => t.prompt).filter(Boolean).join('\n\n'),
         has,
         names,
+        describe,
+        preflight,
         async execute(name, args, context) {
             const entry = handlers[name];
             if (!entry) return `未知工具: ${name}`;
+            const tool = describe(name, args || {});
+            if (typeof options.onBeforeExecute === 'function') {
+                await options.onBeforeExecute(context, tool, args || {});
+            }
             return await entry.handler(args, context, entry.capabilities);
         },
     };
@@ -98,5 +135,8 @@ module.exports = {
     prompts: defaultRegistry.prompts,
     has: defaultRegistry.has,
     names: defaultRegistry.names,
+    describe: defaultRegistry.describe,
+    preflight: defaultRegistry.preflight,
     execute: defaultRegistry.execute,
+    TOOL_EFFECTS,
 };

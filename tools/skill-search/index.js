@@ -47,4 +47,4 @@ async function handler(args = {}, context) {
     };
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, effects: 'read' };

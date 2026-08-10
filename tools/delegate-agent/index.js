@@ -139,6 +139,8 @@ async function handler(args, context, injectedCapabilities) {
     const childTraceId = child.startTrace(JSON.stringify(delegationPackage), {
         parentSessionId,
         parentTraceId: context.auditWriter?.activeTraceId || null,
+    }, {
+        policySource: 'internal',
     });
     child.context.addUser(JSON.stringify(delegationPackage));
     for (const entry of selected) {
@@ -225,6 +227,7 @@ module.exports = {
     handler,
     prompt,
     capabilities,
+    effects: 'external',
     FORWARDED_CAPABILITIES,
     createSubagentCapabilities,
     selectedContext,

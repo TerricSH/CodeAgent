@@ -44,6 +44,13 @@ function currentUserContent(context) {
     return latest && typeof latest.content === 'string' ? latest.content : null;
 }
 
+function renderBufferedReply(output, reply) {
+    if (!reply) return;
+    output.content.renderStart();
+    output.content.render(reply);
+    output.content.renderEnd();
+}
+
 async function runAgentLoop(context, output, options = {}) {
     const client = options.client;
     if (!client || typeof client.chat !== 'function') {
@@ -56,8 +63,12 @@ async function runAgentLoop(context, output, options = {}) {
     const persist = typeof options.persist === 'function' ? options.persist : null;
     const audit = options.audit || context.auditWriter || null;
     if (audit && !audit.activeTraceId) {
-        const traceId = audit.startTrace({ content: currentUserContent(context) });
-        context.startTask(traceId);
+        const userContent = currentUserContent(context);
+        const tracePolicy = plugins && typeof plugins.deriveTracePolicy === 'function'
+            ? plugins.deriveTracePolicy({ userContent })
+            : {};
+        const traceId = audit.startTrace({ content: userContent, tracePolicy });
+        context.startTask(traceId, tracePolicy);
     }
 
     let activeModelSpanId = null;
@@ -76,8 +87,11 @@ async function runAgentLoop(context, output, options = {}) {
 
     try {
         while (true) {
-            const state = dispatcher.createState();
             if (plugins) await plugins.onBeforeTurn(context);
+            const deferContent = plugins
+                && typeof plugins.requiresCompletionAuthorization === 'function'
+                && plugins.requiresCompletionAuthorization(context);
+            const state = dispatcher.createState({ deferContent });
 
             const modelProfile = typeof client.info === 'function' ? client.info() || {} : {};
             const prepared = context.prepareRequest({ tools: toolDefs, modelProfile });
@@ -149,11 +163,15 @@ async function runAgentLoop(context, output, options = {}) {
                 throw error;
             }
 
-            if (state.reply) output.content.renderEnd();
+            if (state.inThinking) {
+                state.inThinking = false;
+                output.thinking.renderEnd();
+            }
+            if (state.reply && !state.deferContent) output.content.renderEnd();
             if (!state.pendingToolCalls) {
-                if (state.reply) context.addAssistant(state.reply);
+                if (state.reply && !state.deferContent) context.addAssistant(state.reply);
                 if (audit) await audit.flush();
-                if (plugins) await plugins.onAfterTurn(context, state);
+                if (plugins && !state.deferContent) await plugins.onAfterTurn(context, state);
 
                 const guards = plugins ? plugins.getContinuationGuards(context) : [];
                 const continuation = await turnContinuation.evaluate(context, guards);
@@ -162,6 +180,28 @@ async function runAgentLoop(context, output, options = {}) {
                     context.addUser(continuation.reminder);
                     if (persist) await persist();
                     continue;
+                }
+
+                const authorization = plugins && typeof plugins.authorizeTraceCompletion === 'function'
+                    ? await plugins.authorizeTraceCompletion(context, { reply: state.reply })
+                    : { authorized: true, reminder: null };
+                if (!authorization.authorized) {
+                    const reminder = authorization.reminder
+                        || authorization.reason
+                        || 'Runtime completion authorization was denied. Resolve the blocking condition and try again.';
+                    if (persist) await persist();
+                    context.addUser(reminder);
+                    if (persist) await persist();
+                    continue;
+                }
+
+                if (state.reply && state.deferContent) {
+                    renderBufferedReply(output, state.reply);
+                    context.addAssistant(state.reply);
+                }
+                if (state.deferContent) {
+                    if (audit) await audit.flush();
+                    if (plugins) await plugins.onAfterTurn(context, state);
                 }
 
                 if (audit) {
@@ -173,6 +213,7 @@ async function runAgentLoop(context, output, options = {}) {
                 return state.reply;
             }
 
+            if (state.reply && state.deferContent) renderBufferedReply(output, state.reply);
             const exchangeKind = cacheKindForToolCalls(state.pendingToolCalls);
             context.addAssistantToolCalls(state.pendingToolCalls, {
                 kind: exchangeKind,
@@ -180,27 +221,41 @@ async function runAgentLoop(context, output, options = {}) {
                 auditRecorded: true,
             });
             if (audit) await audit.flush();
+            let batchFailure = null;
+            if (typeof toolRegistry.preflight === 'function') {
+                try {
+                    await toolRegistry.preflight(state.pendingToolCalls, context);
+                } catch (error) {
+                    batchFailure = safeError(error);
+                }
+            }
             const results = await Promise.all(state.pendingToolCalls.map(async (toolCall) => {
                 const startedAt = new Date().toISOString();
                 output.tool.renderCall(toolCall.name, toolCall.arguments);
                 if (audit) {
                     audit.record({
-                        eventType: 'tool.started',
+                        eventType: batchFailure ? 'tool.blocked' : 'tool.started',
                         actor: toolCall.name,
                         spanId: toolCall.id,
                         parentSpanId: activeModelSpanId,
-                        payload: { arguments: toolCall.arguments },
+                        payload: batchFailure
+                            ? { arguments: toolCall.arguments, ...batchFailure }
+                            : { arguments: toolCall.arguments },
                         createdAt: startedAt,
                     });
                     await audit.flush();
                 }
                 let result;
-                let failure = null;
-                try {
-                    result = await toolRegistry.execute(toolCall.name, toolCall.arguments, context);
-                } catch (error) {
-                    failure = safeError(error);
+                let failure = batchFailure ? { ...batchFailure } : null;
+                if (failure) {
                     result = JSON.stringify(failure);
+                } else {
+                    try {
+                        result = await toolRegistry.execute(toolCall.name, toolCall.arguments, context);
+                    } catch (error) {
+                        failure = safeError(error);
+                        result = JSON.stringify(failure);
+                    }
                 }
                 const finishedAt = new Date().toISOString();
                 output.tool.renderResult(toolCall.name, result);

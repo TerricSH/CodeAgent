@@ -9,6 +9,7 @@ function format(value) {
 
 const status = {
     prompt,
+    effects: 'read',
     definition: {
         type: 'function',
         function: {
@@ -24,6 +25,7 @@ const status = {
 };
 
 const requestAccess = {
+    effects: 'control',
     definition: {
         type: 'function',
         function: {

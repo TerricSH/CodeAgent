@@ -78,4 +78,4 @@ function handler(args = {}, context, injectedCapabilities) {
     }
 }
 
-module.exports = { definition, handler, prompt, capabilities };
+module.exports = { definition, handler, prompt, capabilities, effects: 'read' };

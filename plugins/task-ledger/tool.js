@@ -94,4 +94,4 @@ async function handler(args, context, ext) {
     }
 }
 
-module.exports = { definition, handler, prompt };
+module.exports = { definition, handler, prompt, effects: 'control' };

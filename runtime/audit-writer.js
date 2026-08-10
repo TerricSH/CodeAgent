@@ -32,6 +32,7 @@ class AuditWriter {
             // flush still sees a restored batch if the repository operation fails.
             this._scheduleFlush().catch(() => {});
         }
+        return normalized;
     }
 
     _trackEvent(normalized) {

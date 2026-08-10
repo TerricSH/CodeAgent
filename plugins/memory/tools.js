@@ -5,6 +5,7 @@ const prompt = fs.readFileSync(path.join(__dirname, 'prompt.md'), 'utf8');
 
 const sessionSearch = {
     prompt,
+    effects: 'read',
     definition: {
         type: 'function',
         function: {
@@ -30,6 +31,7 @@ const sessionSearch = {
 };
 
 const sessionReadRange = {
+    effects: 'read',
     definition: {
         type: 'function',
         function: {
@@ -53,6 +55,7 @@ const sessionReadRange = {
 };
 
 const memorySearch = {
+    effects: 'read',
     definition: {
         type: 'function',
         function: {
@@ -77,6 +80,7 @@ const memorySearch = {
 };
 
 const memoryRemember = {
+    effects: 'write',
     definition: {
         type: 'function',
         function: {
@@ -105,6 +109,7 @@ const memoryRemember = {
 };
 
 const memoryForget = {
+    effects: 'write',
     definition: {
         type: 'function',
         function: {

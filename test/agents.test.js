@@ -21,6 +21,7 @@ test('verification subagents can inspect and execute but have no file-writing to
         assert.ok(agent.tools.includes('read_files'));
         assert.equal(agent.tools.includes('write_file'), false);
         assert.equal(agent.tools.includes('write_files'), false);
+        assert.equal(agent.tools.includes('verification_gate'), true);
         assert.match(agent.prompt, /PASS/);
         assert.match(agent.prompt, /FAIL/);
         assert.match(agent.prompt, /INCONCLUSIVE/);

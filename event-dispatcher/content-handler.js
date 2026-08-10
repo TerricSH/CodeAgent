@@ -6,6 +6,10 @@ class ContentHandler extends EventHandler {
             state.inThinking = false;
             this.output.thinking.renderEnd();
         }
+        if (state.deferContent) {
+            state.reply += event.content;
+            return;
+        }
         if (!state.reply) {
             this.output.content.renderStart();
         }

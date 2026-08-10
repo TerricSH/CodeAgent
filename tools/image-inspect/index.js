@@ -97,6 +97,7 @@ module.exports = {
     handler,
     prompt,
     capabilities,
+    effects: 'external',
     createService,
     createHandler,
 };

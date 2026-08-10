@@ -84,6 +84,34 @@ test('tool registration validates dependencies and injects only declared capabil
     assert.equal('secret' in injected, false);
 });
 
+test('tool execution effects are internal metadata evaluated before the handler', async () => {
+    const calls = [];
+    const tool = {
+        definition: {
+            type: 'function',
+            function: { name: 'effect_tool', description: 'fixture', parameters: { type: 'object', properties: {} } },
+        },
+        effects: args => args.inspect ? 'read' : 'write',
+        handler() {
+            calls.push('handler');
+            return 'ok';
+        },
+    };
+    const registry = tools.createRegistry([tool], {
+        includeCore: false,
+        onBeforeExecute(context, metadata) {
+            calls.push(`before:${metadata.effects}`);
+        },
+    });
+
+    await registry.execute('effect_tool', { inspect: true }, new Context('test'));
+    assert.deepEqual(calls, ['before:read', 'handler']);
+    assert.throws(
+        () => tools.createRegistry([{ ...tool, effects: 'invalid' }], { includeCore: false }),
+        /invalid effects/
+    );
+});
+
 test('Context no longer exposes a runtime service locator', () => {
     const context = new Context('test');
     assert.equal(typeof context.getService, 'undefined');

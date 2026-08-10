@@ -24,6 +24,7 @@ function safe(handler) {
 
 const status = {
     prompt,
+    effects: 'read',
     definition: {
         type: 'function',
         function: {
@@ -36,6 +37,7 @@ const status = {
 };
 
 const exec = {
+    effects: 'execute',
     definition: {
         type: 'function',
         function: {
@@ -55,6 +57,7 @@ const exec = {
 };
 
 const reset = {
+    effects: 'write',
     definition: {
         type: 'function',
         function: {
