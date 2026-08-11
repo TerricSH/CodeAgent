@@ -1,14 +1,39 @@
 {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "id": "replace-with-suite-directory-name",
     "templateModel": "vendor@interface/template-model",
     "reflectionModel": "vendor@interface/reflection-model",
-    "task": "Describe the fixed task used to evaluate this Skill.",
     "baseline": ".",
     "skillPath": "seed-skill.md",
-    "rollouts": 4,
-    "epochs": 1,
-    "stepsPerEpoch": 1,
+    "dataset": {
+        "train": [
+            { "id": "train-001", "task": "Describe one training task." }
+        ],
+        "selection": [
+            { "id": "selection-001", "task": "Describe one held-out selection task." }
+        ],
+        "test": [
+            { "id": "test-001", "task": "Describe one disjoint held-out test task." }
+        ]
+    },
+    "optimizer": {
+        "epochs": 4,
+        "rolloutBatchSize": 40,
+        "accumulationFactor": 1,
+        "reflectionMinibatchSize": 8,
+        "mergeBatchSize": 8,
+        "analystWorkers": 16,
+        "reflectionRounds": 3,
+        "shuffleSeed": 42,
+        "editBudget": {
+            "initial": 4,
+            "floor": 2,
+            "schedule": "cosine"
+        },
+        "rejectedBuffer": { "enabled": true, "maxEntries": 20 },
+        "slowUpdate": { "enabled": true, "sampleSize": 20 },
+        "metaUpdate": { "enabled": true }
+    },
     "protectedPaths": [
         "test",
         "package.json",
@@ -16,6 +41,10 @@
     ],
     "evaluation": {
         "command": "npm test",
-        "timeoutMs": 120000
+        "timeoutMs": 120000,
+        "reward": {
+            "mode": "exit_code",
+            "successThreshold": 1
+        }
     }
 }

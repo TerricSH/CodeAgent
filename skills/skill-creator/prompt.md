@@ -10,8 +10,8 @@ Keep these roles separate:
   on the current seed Skill. Treat this model as frozen during the workflow.
 - Verifier: the suite's fixed `evaluation.command` supplies the observable reward. Never let a
   candidate edit the verifier or other protected paths.
-- Reflection model: the suite's `reflectionModel` reads the complete cleaned scored trajectory and
-  returns a structured Skill Patch.
+- Reflection model: the suite's `reflectionModel` analyzes separate success/failure minibatches,
+  merges and ranks their proposals, and returns a bounded structured Skill Patch.
 - `skill_refinement`: owns Rollout isolation, evaluation, ranking, model resolution, and artifacts.
   Do not reproduce those responsibilities inside this Skill.
 
@@ -19,7 +19,7 @@ Keep these roles separate:
 
 1. Establish the Skill contract before writing files:
    - kebab-case Skill name and a concise trigger description;
-   - two to five representative tasks, including at least one difficult or failure-prone case;
+   - disjoint train, selection, and test task sets, including difficult or failure-prone cases;
    - observable success criteria and important non-goals;
    - allowed tools, required inputs, expected outputs, and safety boundaries.
    If a trustworthy automated verifier cannot be derived from the request or the repository,
@@ -30,17 +30,19 @@ Keep these roles separate:
 3. Create a host-owned suite at `skill-refinement/suites/<suite-id>/`:
    - `seed-skill.md`: the complete initial Skill, focused on reusable procedure rather than the
      examples' answers;
-   - `suite.json`: a schema-version-1 manifest with `id`, `task`, `baseline`, `skillPath`,
-     `rollouts`, `epochs`, `stepsPerEpoch`, `protectedPaths`, `evaluation`, and optional `templateModel` and
-     `reflectionModel` references in `vendor[@interface][/model]` form.
+   - `suite.json`: a schema-version-2 manifest with `id`, `baseline`, `skillPath`, disjoint
+     `dataset.train`, `dataset.selection`, and `dataset.test` items, `optimizer`, `protectedPaths`,
+     `evaluation`, and optional `templateModel` and `reflectionModel` references in
+     `vendor[@interface][/model]` form.
    Use `write_files` so the seed and manifest are created together. Evaluation commands and model
    credentials must never be embedded in the Skill body.
 4. Call `skill_refinement` with `list_suites`, then call `refine` once for the new suite. That call
-   owns all configured epochs, steps, parallel batches, structured edits, verification, and
+   owns all configured epochs, data-derived steps, parallel batches, structured edits, verification, and
    temporary Git versions. Inspect every returned step, verifier output, protected-path violation,
    score, and acceptance reason; do not judge a patch from prose alone. A tie or regression is
-   rejected, and only a candidate whose aggregate batch score is strictly greater than the current
-   verified Skill is committed. Never change the task, verifier, or protected paths merely to
+   rejected, and only a candidate whose mean score on the fixed selection split is strictly greater
+   than the current verified Skill is committed. The test split is used only for final reporting.
+   Never change dataset membership, verifier, or protected paths merely to
    improve the score.
 5. Place the returned best verified Skill in the project-native
    `skills/<name>/` directory as `prompt.md` plus `index.js`, then run the relevant tests. The Skill

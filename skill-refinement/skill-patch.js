@@ -3,6 +3,7 @@ const PROTECTED_REGIONS = Object.freeze([
     ['<!-- SLOW_UPDATE_START -->', '<!-- SLOW_UPDATE_END -->'],
     ['<!-- APPENDIX_START -->', '<!-- APPENDIX_END -->'],
 ]);
+const SLOW_UPDATE_REGION = PROTECTED_REGIONS[0];
 
 function stripFence(value) {
     const text = String(value || '').trim();
@@ -64,8 +65,80 @@ function parsePatch(value) {
         rankingDetails: raw.ranking_details && typeof raw.ranking_details === 'object'
             ? raw.ranking_details
             : (raw.rankingDetails || null),
+        failureSummary: Array.isArray(raw.failure_summary)
+            ? Object.freeze(raw.failure_summary)
+            : (Array.isArray(raw.failureSummary) ? Object.freeze(raw.failureSummary) : Object.freeze([])),
+        successPatterns: Array.isArray(raw.success_patterns)
+            ? Object.freeze(raw.success_patterns.map(String))
+            : (Array.isArray(raw.successPatterns)
+                ? Object.freeze(raw.successPatterns.map(String))
+                : Object.freeze([])),
         edits: Object.freeze(edits),
     });
+}
+
+function editPriority(edit, index) {
+    return {
+        edit,
+        index,
+        support: Number.isInteger(edit.supportCount) ? edit.supportCount : 1,
+        failure: edit.sourceType === 'failure' ? 1 : 0,
+        merge: Number.isInteger(edit.mergeLevel) ? edit.mergeLevel : 0,
+    };
+}
+
+function selectPatchEdits(value, budget) {
+    const patch = parsePatch(value);
+    const limit = Math.max(0, Number.isInteger(Number(budget)) ? Number(budget) : patch.edits.length);
+    if (limit === 0) return parsePatch({ reasoning: patch.reasoning, edits: [] });
+    const ranked = patch.edits.map(editPriority).sort((left, right) => (
+        right.support - left.support
+        || right.failure - left.failure
+        || right.merge - left.merge
+        || left.index - right.index
+    ));
+    const seen = new Set();
+    const selected = [];
+    for (const item of ranked) {
+        const edit = item.edit;
+        const key = edit.op === 'append'
+            ? `append:${edit.content.trim()}`
+            : `target:${edit.target}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        selected.push(edit);
+        if (selected.length >= limit) break;
+    }
+    return parsePatch({
+        reasoning: patch.reasoning,
+        ranking_details: {
+            ...(patch.rankingDetails || {}),
+            proposed: patch.edits.length,
+            selected: selected.length,
+            budget: limit,
+        },
+        failure_summary: patch.failureSummary,
+        success_patterns: patch.successPatterns,
+        edits: selected,
+    });
+}
+
+function replaceSlowUpdate(skill, content) {
+    const [start, end] = SLOW_UPDATE_REGION;
+    const source = String(skill || '');
+    const guidance = sanitizeContent(content).trim();
+    const startIndex = source.indexOf(start);
+    const endIndex = source.indexOf(end);
+    if ((startIndex === -1) !== (endIndex === -1) || (startIndex !== -1 && endIndex < startIndex)) {
+        throw new Error('Skill contains a malformed SLOW_UPDATE protected region');
+    }
+    const block = `${start}\n${guidance}\n${end}`;
+    if (startIndex !== -1) {
+        return source.slice(0, startIndex) + block + source.slice(endIndex + end.length);
+    }
+    const appendixStart = source.indexOf(PROTECTED_REGIONS[1][0]);
+    if (appendixStart === -1) return `${source.trimEnd()}\n\n${block}\n`;
+    return `${source.slice(0, appendixStart).trimEnd()}\n\n${block}\n\n${source.slice(appendixStart)}`;
 }
 
 function earliestProtectedStart(skill) {
@@ -116,7 +189,7 @@ function applyEdit(skill, edit) {
     if (edit.op === 'append') return appendBeforeProtected(skill, content, 'applied_append');
     if (edit.op === 'insert_after') {
         if (!target || !skill.includes(target)) {
-            return appendBeforeProtected(skill, content, 'applied_insert_after_fallback_append');
+            return [skill, 'skipped_insert_after_target_not_found'];
         }
         const targetEnd = skill.indexOf(target) + target.length;
         const newline = skill.indexOf('\n', targetEnd);
@@ -164,10 +237,9 @@ function applyPatchWithReport(skill, value) {
 }
 
 module.exports = {
-    EDIT_OPS,
-    PROTECTED_REGIONS,
+    stripFence,
     parsePatch,
-    applyEdit,
+    selectPatchEdits,
+    replaceSlowUpdate,
     applyPatchWithReport,
-    targetInProtectedRegion,
 };

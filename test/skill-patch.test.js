@@ -68,6 +68,16 @@ test('SkillOpt Patch blocks targets that overlap a protected region boundary', (
     assert.match(result.skill, /protected/);
 });
 
+test('insert_after with a missing target is rejected instead of becoming a global append', () => {
+    const skill = '# Skill\nExisting rule\n';
+    const result = applyPatchWithReport(skill, {
+        edits: [{ op: 'insert_after', target: 'missing heading', content: 'local rule' }],
+    });
+    assert.equal(result.changed, false);
+    assert.equal(result.reports[0].status, 'skipped_insert_after_target_not_found');
+    assert.equal(result.skill, skill);
+});
+
 test('one temporary Git repository records accepted Skill versions and restores rejected work', async (t) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codeagent-skill-git-'));
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));

@@ -3,6 +3,8 @@ const path = require('node:path');
 const { sessionKey } = require('../sandbox/policy');
 const { pathIsInside, ensureContainedDirectory } = require('../sandbox/workspace');
 
+const RESULT_SCHEMA_VERSION = 4;
+
 class RefinementArtifactRepository {
     constructor(sessionId, config) {
         this.config = config;
@@ -22,10 +24,13 @@ class RefinementArtifactRepository {
         };
     }
 
-    writeRollout(artifactRoot, rolloutId, record, batchId = null) {
-        const root = batchId
-            ? path.join(artifactRoot, 'batches', this._segment(batchId, 'batchId'), 'rollouts')
-            : path.join(artifactRoot, 'rollouts');
+    writeRollout(artifactRoot, rolloutId, record, batchId) {
+        const root = path.join(
+            artifactRoot,
+            'batches',
+            this._segment(batchId, 'batchId'),
+            'rollouts'
+        );
         this._writeJson(
             path.join(root, this._segment(rolloutId, 'rolloutId'), 'record.json'),
             record
@@ -38,20 +43,13 @@ class RefinementArtifactRepository {
         return candidatePath;
     }
 
-    writeRawTrajectories(artifactRoot, records) {
-        const evidencePath = path.join(artifactRoot, 'raw-rollout-trajectories.jsonl');
-        const content = records.map(record => JSON.stringify(record)).join('\n');
-        fs.writeFileSync(evidencePath, content ? `${content}\n` : '', 'utf8');
-        return evidencePath;
-    }
-
     appendRawTrajectories(artifactRoot, records) {
-        const evidencePath = path.join(artifactRoot, 'raw-rollout-trajectories.jsonl');
-        fs.mkdirSync(path.dirname(evidencePath), { recursive: true });
+        const recordsPath = path.join(artifactRoot, 'raw-rollout-trajectories.jsonl');
+        fs.mkdirSync(path.dirname(recordsPath), { recursive: true });
         const content = records.map(record => JSON.stringify(record)).join('\n');
-        if (content) fs.appendFileSync(evidencePath, `${content}\n`, 'utf8');
-        else if (!fs.existsSync(evidencePath)) fs.writeFileSync(evidencePath, '', 'utf8');
-        return evidencePath;
+        if (content) fs.appendFileSync(recordsPath, `${content}\n`, 'utf8');
+        else if (!fs.existsSync(recordsPath)) fs.writeFileSync(recordsPath, '', 'utf8');
+        return recordsPath;
     }
 
     writeStep(artifactRoot, epoch, step, record) {
@@ -95,12 +93,14 @@ class RefinementArtifactRepository {
         return true;
     }
 
-    writeEvidence(artifactRoot, records) {
-        return this.writeRawTrajectories(artifactRoot, records);
-    }
-
     writeResult(artifactRoot, result) {
         this._writeJson(path.join(artifactRoot, 'result.json'), result);
+    }
+
+    writeOptimizerState(artifactRoot, state) {
+        const file = path.join(artifactRoot, 'optimizer-state.json');
+        this._writeJson(file, state);
+        return file;
     }
 
     history(limit = 20) {
@@ -113,7 +113,9 @@ class RefinementArtifactRepository {
             if (!fs.existsSync(resultPath)) continue;
             try {
                 const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
-                if (result && result.run) runs.push(result.run);
+                if (result?.schemaVersion === RESULT_SCHEMA_VERSION && result.run) {
+                    runs.push(result.run);
+                }
             } catch {
                 // Ignore incomplete or corrupt artifacts while listing other valid runs.
             }
@@ -132,7 +134,13 @@ class RefinementArtifactRepository {
         if (!pathIsInside(root, runDirectory)) throw new Error('runId escaped the run root');
         const resultPath = path.join(runDirectory, 'result.json');
         if (!fs.existsSync(resultPath)) throw new Error(`Unknown Skill Refinement run: ${runId}`);
-        return JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+        const result = JSON.parse(fs.readFileSync(resultPath, 'utf8'));
+        if (result?.schemaVersion !== RESULT_SCHEMA_VERSION) {
+            throw new Error(
+                `Unsupported Skill Refinement result schemaVersion: ${result?.schemaVersion}`
+            );
+        }
+        return result;
     }
 
     _writeJson(file, value) {
@@ -149,4 +157,4 @@ class RefinementArtifactRepository {
     }
 }
 
-module.exports = { RefinementArtifactRepository };
+module.exports = { RefinementArtifactRepository, RESULT_SCHEMA_VERSION };
