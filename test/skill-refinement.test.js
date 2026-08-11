@@ -6,13 +6,12 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const tools = require('../tools');
 const skillRefinementTool = require('../tools/skill-refinement');
-const {
-    SkillRefinementService,
-    SkillRefinementOrchestrator,
-    SandboxEvaluator,
-    RefinementArtifactRepository,
-    RolloutCoordinator,
-} = require('../skill-refinement');
+const skillRefinementPublic = require('../skill-refinement');
+const { SkillRefinementService } = require('../skill-refinement/service');
+const { SkillRefinementOrchestrator } = require('../skill-refinement/orchestrator');
+const { SandboxEvaluator } = require('../skill-refinement/evaluator');
+const { RefinementArtifactRepository } = require('../skill-refinement/artifact-repository');
+const { RolloutCoordinator } = require('../skill-refinement/rollout-coordinator');
 const { resolveRefinementModels } = require('../skill-refinement/models');
 const { normalizeRefinementConfig } = require('../skill-refinement/config');
 const { TrajectoryJournal, readJsonl } = require('../skill-refinement/trajectory-journal');
@@ -33,15 +32,42 @@ function createSuite(root, overrides = {}) {
     );
     fs.writeFileSync(path.join(project, 'test', 'locked.test.js'), 'trusted\n', 'utf8');
     fs.writeFileSync(path.join(suiteDir, 'seed-skill.md'), '# Seed Skill\nPrefer small patches.\n', 'utf8');
+    const task = 'Improve source.js without changing protected tests.';
+    const dataset = {
+        train: Array.from({ length: 3 }, (_, index) => ({
+            id: `train-${index + 1}`,
+            task,
+        })),
+        selection: Array.from({ length: 3 }, (_, index) => ({
+            id: `selection-${index + 1}`,
+            task,
+        })),
+        test: Array.from({ length: 3 }, (_, index) => ({
+            id: `test-${index + 1}`,
+            task,
+        })),
+    };
     fs.writeFileSync(path.join(suiteDir, 'suite.json'), JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         id: 'sample-suite',
         templateModel: 'vendor@interface/template-model',
         reflectionModel: 'vendor@interface/reflection-model',
-        task: 'Improve source.js without changing protected tests.',
         baseline: '.',
         skillPath: 'seed-skill.md',
-        rollouts: 3,
+        dataset,
+        optimizer: {
+            epochs: 1,
+            rolloutBatchSize: 3,
+            accumulationFactor: 1,
+            reflectionMinibatchSize: 2,
+            mergeBatchSize: 2,
+            analystWorkers: 2,
+            reflectionRounds: 1,
+            editBudget: { initial: 1, floor: 1, schedule: 'constant' },
+            rejectedBuffer: { enabled: true, maxEntries: 10 },
+            slowUpdate: { enabled: false, sampleSize: 2 },
+            metaUpdate: { enabled: false },
+        },
         protectedPaths: ['test'],
         evaluation: { command: 'node verify.js', timeoutMs: 5000 },
         ...overrides,
@@ -97,6 +123,11 @@ test('Skill Refinement runs isolated evaluations and produces a refined Skill ca
         assert.equal(model.info().model, 'template-model');
         assert.equal(fs.existsSync(path.join(workspace, '.env')), false);
         assert.equal(fs.existsSync(path.join(workspace, 'model-providers', 'config.json')), false);
+        assert.equal(
+            fs.existsSync(path.join(workspace, 'skill-refinement', 'suites', 'sample-suite', 'suite.json')),
+            false,
+            'held-out suite data must not enter a rollout workspace'
+        );
         if (rolloutId === 'rollout-001') {
             fs.writeFileSync(path.join(workspace, 'solution.js'), 'ok\n', 'utf8');
         } else if (rolloutId === 'rollout-002') {
@@ -116,9 +147,10 @@ test('Skill Refinement runs isolated evaluations and produces a refined Skill ca
             messages: [{ role: 'assistant', content: `completed ${rolloutId}` }],
         };
     };
-    const skillRefiner = async ({ model, suite, rollouts }) => {
+    const skillRefiner = async ({ model, suite, evidenceBatches }) => {
         assert.equal(model.info().model, 'reflection-model');
         assert.match(suite.skill, /Prefer small patches/);
+        const rollouts = evidenceBatches[0].ranking;
         assert.equal(rollouts[0].id, 'rollout-001');
         const response = await model.completeDetailed([{ role: 'user', content: 'reflect' }], {
             purpose: 'reflection',
@@ -143,6 +175,11 @@ test('Skill Refinement runs isolated evaluations and produces a refined Skill ca
     }, { client, modelResolver, rolloutExecutor, skillRefiner });
 
     assert.equal(service.listSuites().suites[0].id, 'sample-suite');
+    assert.deepEqual(service.listSuites().suites[0].dataset, {
+        train: 3,
+        selection: 3,
+        test: 3,
+    });
     assert.equal(
         service.listSuites().suites[0].reflectionModel,
         'vendor@interface/reflection-model'
@@ -150,9 +187,10 @@ test('Skill Refinement runs isolated evaluations and produces a refined Skill ca
     const result = await service.refine({ suiteId: 'sample-suite' });
 
     assert.equal(result.run.status, 'completed');
-    assert.equal(result.best.rolloutId, 'rollout-001');
-    assert.ok(result.ranking.every(item => item.protectedPathViolations.length === 0));
-    assert.equal(dockerCalls.length, 5, 'protected baseline rollout must not reach the evaluator');
+    assert.equal(result.schemaVersion, 4);
+    assert.equal(result.bestTestRollout.rolloutId, 'rollout-001');
+    assert.ok(result.testRanking.every(item => item.protectedPathViolations.length === 0));
+    assert.equal(dockerCalls.length, 10, 'protected rollouts must not reach the evaluator');
     assert.match(result.candidateSkill.content, /smallest verified patch/);
     assert.equal(result.models.template.model, 'template-model');
     assert.equal(result.models.reflection.model, 'reflection-model');
@@ -161,13 +199,13 @@ test('Skill Refinement runs isolated evaluations and produces a refined Skill ca
         'vendor@interface/template-model',
     ]);
     assert.equal(fs.readFileSync(result.candidateSkill.path, 'utf8').trim(), result.candidateSkill.content);
-    assert.match(fs.readFileSync(result.rolloutRecordsPath, 'utf8'), /"reward":-1/);
-    assert.equal(result.cleanedTrajectoryPath, result.evidencePath);
+    assert.match(fs.readFileSync(result.rolloutRecordsPath, 'utf8'), /"reward":0/);
     assert.match(path.basename(result.rawTrajectoryPath), /raw-semantic-events\.jsonl/);
     assert.match(path.basename(result.cleanedTrajectoryPath), /cleaned-trajectories\.jsonl/);
     assert.match(fs.readFileSync(result.rolloutRecordsPath, 'utf8'), /"agentError":null/);
     assert.equal(result.steps[0].status, 'accepted');
-    assert.equal(result.final.score, 3);
+    assert.equal(result.final.selectionScore, 1);
+    assert.equal(result.final.testScore, 1);
     assert.equal(result.skillVersions.repositoryRemoved, true);
     assert.equal(fs.existsSync(path.join(path.dirname(result.skillVersions.worktreeSkillPath), '.git')), false);
     assert.doesNotMatch(
@@ -185,11 +223,20 @@ test('Skill Refinement runs isolated evaluations and produces a refined Skill ca
         }
     };
     findWorkspaces(result.run.artifactRoot);
-    assert.deepEqual(retainedWorkspaces, [result.best.workspace]);
-    assert.match(fs.readFileSync(result.workspaceRetentionPath, 'utf8'), /candidate-rejected|batch-non-best|superseded-incumbent/);
+    assert.deepEqual(retainedWorkspaces, [result.bestTestRollout.workspace]);
+    assert.match(fs.readFileSync(result.workspaceRetentionPath, 'utf8'), /training-evidence-consumed|superseded-selection-incumbent/);
     assert.match(fs.readFileSync(sourceSkill, 'utf8'), /Seed Skill/);
     assert.equal(service.history()[0].id, result.run.id);
     assert.equal(service.result(result.run.id).candidateSkill.content, result.candidateSkill.content);
+    const legacyRunId = crypto.randomUUID();
+    const legacyRunRoot = path.join(service.runRoot, legacyRunId);
+    fs.mkdirSync(legacyRunRoot, { recursive: true });
+    fs.writeFileSync(path.join(legacyRunRoot, 'result.json'), JSON.stringify({
+        schemaVersion: 3,
+        run: { id: legacyRunId, startedAt: new Date().toISOString() },
+    }));
+    assert.equal(service.history().some(run => run.id === legacyRunId), false);
+    assert.throws(() => service.result(legacyRunId), /Unsupported Skill Refinement result schemaVersion/);
 });
 
 test('Skill Refinement model roles fall back explicitly and reject unresolved suite references', async () => {
@@ -222,7 +269,25 @@ test('Skill Refinement preserves raw trajectories when reflection synthesis fail
     const { project, suitesRoot } = createSuite(root, {
         templateModel: null,
         reflectionModel: null,
-        rollouts: 2,
+        dataset: {
+            train: [
+                { id: 'train-1', task: 'task one' },
+                { id: 'train-2', task: 'task two' },
+            ],
+            selection: [{ id: 'selection-1', task: 'selection task' }],
+            test: [{ id: 'test-1', task: 'test task' }],
+        },
+        optimizer: {
+            epochs: 1,
+            rolloutBatchSize: 2,
+            reflectionMinibatchSize: 2,
+            mergeBatchSize: 2,
+            analystWorkers: 2,
+            reflectionRounds: 1,
+            editBudget: { initial: 1, floor: 1, schedule: 'constant' },
+            slowUpdate: { enabled: false },
+            metaUpdate: { enabled: false },
+        },
         protectedPaths: [],
     });
     const sandboxRoot = path.join(root, 'sandboxes');
@@ -281,7 +346,7 @@ test('Skill Refinement preserves raw trajectories when reflection synthesis fail
     assert.equal(fs.existsSync(failedRun.rawTrajectoryPath), true);
     assert.equal(
         fs.readFileSync(failedRun.rolloutRecordsPath, 'utf8').trim().split(/\r?\n/).length,
-        2
+        3
     );
 });
 
@@ -290,9 +355,31 @@ test('SkillOpt rejects tied candidates, restores HEAD, and uses one session Git 
     const { project, suitesRoot, sourceSkill } = createSuite(root, {
         templateModel: null,
         reflectionModel: null,
-        rollouts: 2,
-        epochs: 1,
-        stepsPerEpoch: 2,
+        dataset: {
+            train: Array.from({ length: 4 }, (_, index) => ({
+                id: `train-${index + 1}`,
+                task: `training task ${index + 1}`,
+            })),
+            selection: [
+                { id: 'selection-1', task: 'selection one' },
+                { id: 'selection-2', task: 'selection two' },
+            ],
+            test: [
+                { id: 'test-1', task: 'test one' },
+                { id: 'test-2', task: 'test two' },
+            ],
+        },
+        optimizer: {
+            epochs: 1,
+            rolloutBatchSize: 2,
+            reflectionMinibatchSize: 2,
+            mergeBatchSize: 2,
+            analystWorkers: 2,
+            reflectionRounds: 1,
+            editBudget: { initial: 1, floor: 1, schedule: 'constant' },
+            slowUpdate: { enabled: false },
+            metaUpdate: { enabled: false },
+        },
         protectedPaths: [],
     });
     t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -341,12 +428,16 @@ test('SkillOpt rejects tied candidates, restores HEAD, and uses one session Git 
 
     const result = await service.refine({ suiteId: 'sample-suite' });
     assert.deepEqual(result.steps.map(item => item.reason), [
-        'aggregate-score-tied',
-        'aggregate-score-tied',
+        'selection-score-tied',
+        'selection-score-tied',
     ]);
     assert.equal(result.final.acceptedSteps, 0);
-    assert.equal(result.final.score, 2);
-    assert.equal(result.run.rolloutCount, 6);
+    assert.equal(result.final.selectionScore, 1);
+    assert.equal('score' in result.final, false);
+    assert.equal('baseline' in result, false);
+    assert.equal('verifiedBatch' in result.final, false);
+    assert.equal('evidencePath' in result, false);
+    assert.equal(result.run.rolloutCount, 12);
     assert.ok(seenSkills.every(skill => !skill.includes('candidate step')));
     assert.match(result.candidateSkill.content, /Prefer small patches/);
     assert.doesNotMatch(result.candidateSkill.content, /candidate step/);
@@ -356,6 +447,221 @@ test('SkillOpt rejects tied candidates, restores HEAD, and uses one session Git 
     );
     assert.equal(fs.existsSync(path.join(path.dirname(result.skillVersions.worktreeSkillPath), '.git')), false);
     assert.match(fs.readFileSync(sourceSkill, 'utf8'), /Prefer small patches/);
+});
+
+test('SkillOpt keeps selection out of reflection, reuses score cache, and feeds rejected edits back', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codeagent-refinement-splits-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const { project, suitesRoot } = createSuite(root, {
+        templateModel: null,
+        reflectionModel: null,
+        dataset: {
+            train: [
+                { id: 'train-1', task: 'training one' },
+                { id: 'train-2', task: 'training two' },
+            ],
+            selection: [
+                { id: 'selection-1', task: 'selection one' },
+                { id: 'selection-2', task: 'selection two' },
+            ],
+            test: [{ id: 'test-1', task: 'test one' }],
+        },
+        optimizer: {
+            epochs: 1,
+            rolloutBatchSize: 1,
+            reflectionMinibatchSize: 1,
+            mergeBatchSize: 2,
+            analystWorkers: 2,
+            reflectionRounds: 1,
+            editBudget: { initial: 1, floor: 1, schedule: 'constant' },
+            rejectedBuffer: { enabled: true, maxEntries: 10 },
+            slowUpdate: { enabled: false },
+            metaUpdate: { enabled: false },
+        },
+        protectedPaths: [],
+    });
+    const artifacts = new RefinementArtifactRepository('split-contract', {
+        sandboxRoot: path.join(root, 'sandboxes'),
+        maxRuns: 20,
+    });
+    const model = {
+        chat() {},
+        complete() {},
+        info: () => ({ model: 'current-model' }),
+    };
+    const rolloutCalls = [];
+    const rollouts = {
+        async run({ runId, rolloutIndex, suite, batchId, phase }) {
+            rolloutCalls.push({
+                phase,
+                batchId,
+                split: suite.taskItem.split,
+                taskId: suite.taskItem.id,
+                skill: suite.skill,
+            });
+            const bad = suite.skill.includes('bad candidate');
+            const score = suite.taskItem.split === 'selection' && bad ? 0 : 1;
+            return {
+                id: `rollout-${String(rolloutIndex + 1).padStart(3, '0')}`,
+                runId,
+                workspace: null,
+                reply: score ? 'done' : 'failed',
+                messages: [],
+                agentError: null,
+                evaluation: { ok: Boolean(score), exitCode: score ? 0 : 1, durationMs: 1 },
+                protectedPathViolations: [],
+                diff: { fileCount: 0, changedBytes: 0, files: [] },
+                score,
+                success: Boolean(score),
+            };
+        },
+    };
+    const reflected = [];
+    const orchestrator = new SkillRefinementOrchestrator({
+        projectRoot: project,
+        suitesRoot,
+    }, {
+        artifacts,
+        rollouts,
+        defaultModel: model,
+        async skillRefiner({ evidenceBatches, currentSkill, rejectedBuffer, step }) {
+            reflected.push({
+                step,
+                splits: evidenceBatches.flatMap(batch => batch.items.map(item => item.split)),
+                currentSkill,
+                rejectedBuffer: JSON.parse(JSON.stringify(rejectedBuffer)),
+            });
+            return {
+                patch: {
+                    failure_summary: [{ failure_type: 'bad-output', count: 1 }],
+                    edits: [{ op: 'append', content: 'bad candidate', source_type: 'failure' }],
+                },
+            };
+        },
+    });
+
+    const result = await orchestrator.refine({ suiteId: 'sample-suite' });
+    assert.equal(reflected.length, 2);
+    assert.ok(reflected.every(call => call.splits.every(split => split === 'train')));
+    assert.ok(reflected.every(call => !call.currentSkill.includes('bad candidate')));
+    assert.equal(reflected[0].rejectedBuffer.length, 0);
+    assert.equal(reflected[1].rejectedBuffer.length, 1);
+    assert.equal(reflected[1].rejectedBuffer[0].scoreDelta, -1);
+    assert.equal(reflected[1].rejectedBuffer[0].edits[0].content, 'bad candidate');
+    assert.equal(
+        rolloutCalls.filter(call => call.phase === 'selection-candidate').length,
+        2,
+        'the second identical candidate must use the hash score cache'
+    );
+    assert.equal(
+        rolloutCalls.filter(call => call.phase === 'test-final').length,
+        1,
+        'the held-out test split must run exactly once on the final best Skill'
+    );
+    assert.equal(result.optimizerState.selectionCacheSize, 2);
+    assert.equal(result.final.selectionScore, 1);
+    assert.equal(result.final.testScore, 1);
+    assert.equal(result.steps[1].reason, 'selection-score-regressed');
+    const secondRecord = JSON.parse(fs.readFileSync(result.steps[1].recordPath, 'utf8'));
+    assert.equal(secondRecord.candidateBatch.cached, true);
+    assert.equal(secondRecord.candidateBatch.cachedFrom, 'epoch-001-step-001-selection');
+});
+
+test('epoch slow update uses paired training tasks, passes the selection gate, and keeps meta optimizer-only', async (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codeagent-refinement-slow-meta-'));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const { project, suitesRoot } = createSuite(root, {
+        templateModel: null,
+        reflectionModel: null,
+        dataset: {
+            train: [{ id: 'train-1', task: 'training task' }],
+            selection: [{ id: 'selection-1', task: 'selection task' }],
+            test: [{ id: 'test-1', task: 'test task' }],
+        },
+        optimizer: {
+            epochs: 2,
+            rolloutBatchSize: 1,
+            reflectionMinibatchSize: 1,
+            mergeBatchSize: 2,
+            analystWorkers: 1,
+            reflectionRounds: 1,
+            editBudget: { initial: 1, floor: 1, schedule: 'constant' },
+            rejectedBuffer: { enabled: true, maxEntries: 10 },
+            slowUpdate: { enabled: true, sampleSize: 1 },
+            metaUpdate: { enabled: true },
+        },
+        protectedPaths: [],
+    });
+    const artifacts = new RefinementArtifactRepository('slow-meta-contract', {
+        sandboxRoot: path.join(root, 'sandboxes'),
+        maxRuns: 20,
+    });
+    const model = {
+        chat() {},
+        complete() {},
+        info: () => ({ model: 'current-model' }),
+    };
+    const rollouts = {
+        async run({ runId, rolloutIndex, suite }) {
+            const learned = suite.skill.includes('Durable verification guidance');
+            const score = learned ? 1 : 0;
+            return {
+                id: `rollout-${String(rolloutIndex + 1).padStart(3, '0')}`,
+                runId,
+                workspace: null,
+                reply: learned ? 'verified' : 'not verified',
+                messages: [],
+                agentError: null,
+                evaluation: { ok: learned, exitCode: learned ? 0 : 1, durationMs: 1 },
+                protectedPathViolations: [],
+                diff: { fileCount: 0, changedBytes: 0, files: [] },
+                score,
+                success: Boolean(score),
+            };
+        },
+    };
+    let slowInput = null;
+    let metaInput = null;
+    const reflectionBufferLengths = [];
+    const orchestrator = new SkillRefinementOrchestrator({
+        projectRoot: project,
+        suitesRoot,
+    }, {
+        artifacts,
+        rollouts,
+        defaultModel: model,
+        async skillRefiner({ rejectedBuffer }) {
+            reflectionBufferLengths.push(rejectedBuffer.length);
+            return { patch: { edits: [] } };
+        },
+        async slowUpdater(options) {
+            slowInput = options;
+            return {
+                content: 'Durable verification guidance',
+                reasoning: 'persistent failure across epochs',
+                comparison: { persistentFailures: [{ taskId: 'train-1' }] },
+            };
+        },
+        async metaUpdater(options) {
+            metaInput = options;
+            return { content: 'Avoid unsupported no-op edits.' };
+        },
+    });
+
+    const result = await orchestrator.refine({ suiteId: 'sample-suite' });
+    assert.equal(slowInput.previousBatch.rollouts[0].taskId, 'train-1');
+    assert.equal(slowInput.currentBatch.rollouts[0].taskId, 'train-1');
+    assert.deepEqual(reflectionBufferLengths, [0, 0], 'the rejected buffer must reset each epoch');
+    assert.equal(metaInput.rejectedBuffer.length, 1);
+    assert.ok(metaInput.history.some(item => item.step === 'slow'));
+    assert.match(result.candidateSkill.content, /SLOW_UPDATE_START/);
+    assert.match(result.candidateSkill.content, /Durable verification guidance/);
+    assert.doesNotMatch(result.candidateSkill.content, /Avoid unsupported no-op edits/);
+    assert.equal(result.final.selectionScore, 1);
+    assert.equal(result.final.testScore, 1);
+    assert.equal(result.final.acceptedSteps, 1);
+    assert.equal(result.optimizerState.metaSkill, 'Avoid unsupported no-op edits.');
+    assert.equal(result.steps.at(-1).reason, 'slow-update-selection-score-strictly-improved');
 });
 
 test('sandbox-attempt retries retain raw audit data but exclude retry noise from reflection', async (t) => {
@@ -443,6 +749,7 @@ test('sandbox-attempt retries retain raw audit data but exclude retry noise from
 });
 
 test('Skill Refinement components expose narrow, non-overlapping responsibilities', () => {
+    assert.deepEqual(Object.keys(skillRefinementPublic), ['SkillRefinementService']);
     assert.equal(typeof SkillRefinementOrchestrator.prototype.refine, 'function');
     assert.equal(typeof SkillRefinementOrchestrator.prototype.status, 'undefined');
     assert.equal(typeof SandboxEvaluator.prototype.execute, 'function');

@@ -319,14 +319,15 @@ npm run sandbox:build
 
 ### Skill Refinement Tool
 
-Skill Refinement 是 SkillOpt 风格的技能精炼能力，不训练模型权重，也不管理梯度、优化器或
-checkpoint。宿主在 [`skill-refinement/suites/`](skill-refinement/suites/README.md) 中固定任务、
-初始 Skill、评测命令和保护路径；`skill_refinement` Tool 从同一安全快照并行运行隔离批次，
-通过结构化 Patch 迭代 Skill，并且只接受聚合分数严格提升的候选。整个优化会话只使用一个临时
+Skill Refinement 是隔离的 SkillOpt 技能优化能力，不训练模型权重。宿主在
+[`skill-refinement/suites/`](skill-refinement/suites/README.md) 中固定互斥的 train/selection/test
+任务集、初始 Skill、自动评测命令和保护路径；`skill_refinement` Tool 从同一安全快照并行运行
+训练批次，将成功和失败轨迹分开反思、分层合并并在文本学习率预算内选择局部 Patch。候选只有在
+固定 selection 集的平均分严格提升时才会接受，最终 best Skill 只在 test 集评测一次。整个优化会话只使用一个临时
 Git 仓库管理 `SKILL.md` 版本；导出历史后删除 `.git`，不会修改项目仓库或源 Skill。
 
-Suite 可分别设置 `templateModel` 和 `reflectionModel`：前者执行 Rollout，后者读取清洗后的完整
-评分轨迹并生成结构化 Patch。模型通过现有 API provider 接入，可部署在云端或本地服务；两个角色
+Suite 可分别设置 `templateModel` 和 `reflectionModel`：前者执行 Rollout，后者分析清洗后的评分
+训练轨迹并生成、合并、排序结构化 Patch；reward 始终由固定 harness 提供。模型通过现有 API provider 接入，可部署在云端或本地服务；两个角色
 都必须返回显式 reasoning/thinking。模型引用不会切换主会话模型。
 
 Tool 支持 `status`、`list_suites`、`refine`、`history` 和 `result`。只有主 agent 可以启动

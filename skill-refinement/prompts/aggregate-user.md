@@ -1,15 +1,19 @@
 # Current Skill
 {{skill}}
 
-# Evaluation task
-{{task}}
+# Merge stage
+{{stage}}
 
-# Optimization position
-Epoch {{epoch}}, step {{step}}
+# Optimizer-only meta guidance
+{{metaSkill}}
 
-# Patches derived from all lossless trajectory chunks
+# Epoch-local rejected-edit feedback
+{{rejectedBuffer}}
+
+# Patch proposals
 {{patches}}
 
-Aggregate these into one non-conflicting Patch. Retain edits supported across chunks, remove
-duplicates, resolve conflicting targets using the stronger evidence, and return only the required
-Patch JSON.
+Merge these proposals hierarchically. Combine independent support counts, remove duplicates,
+resolve conflicting targets, and discard example-specific edits. During the final merge, failure
+corrections take priority over success reinforcement when they conflict. Return one Patch JSON
+object only; do not apply an edit budget yet.

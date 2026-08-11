@@ -123,7 +123,14 @@ async function runSkillRollout(options) {
     }
     const context = new Context(buildRefinementRolloutPrompt({ suite, rolloutId }), {
         sessionId: `${runId}:${rolloutId}`,
-        metadata: { type: 'skill-refinement-rollout', runId, rolloutId, suiteId: suite.id },
+        metadata: {
+            type: 'skill-refinement-rollout',
+            runId,
+            rolloutId,
+            suiteId: suite.id,
+            split: suite.taskItem?.split || null,
+            taskId: suite.taskItem?.id || null,
+        },
     });
     const info = typeof model.info === 'function' ? model.info() : null;
     if (info && Number.isInteger(info.maxContextTokens)) {

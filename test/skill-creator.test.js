@@ -27,7 +27,9 @@ test('skill-creator keeps creation, rollout, verification, and reflection roles 
     assert.match(prompt, /reflectionModel/);
     assert.match(prompt, /skill_refinement/);
     assert.match(prompt, /call `refine` once/i);
-    assert.match(prompt, /aggregate batch score is strictly greater/i);
+    assert.match(prompt, /mean score on the fixed selection split is strictly greater/i);
+    assert.match(prompt, /dataset\.train/);
+    assert.match(prompt, /test split is used only for final reporting/i);
     assert.match(prompt, /temporary Git versions/i);
     assert.match(prompt, /do\s+not describe it as reinforcement-learning model training/i);
     assert.match(prompt, /Place the returned best verified Skill[\s\S]+`skills\/<name>\/`/i);

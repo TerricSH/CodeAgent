@@ -8,7 +8,7 @@ class SkillRefinementService {
     constructor(sessionId, config = {}, dependencies = {}) {
         this.sessionId = String(sessionId || 'anonymous');
         this.config = normalizeRefinementConfig(config);
-        this.defaultModel = dependencies.defaultModel || dependencies.model || null;
+        this.defaultModel = dependencies.defaultModel || null;
         this.modelResolver = dependencies.modelResolver || null;
         this.evaluator = dependencies.evaluator || new SandboxEvaluator(
             this.sessionId,
@@ -32,6 +32,8 @@ class SkillRefinementService {
                 defaultModel: this.defaultModel,
                 modelResolver: this.modelResolver,
                 skillRefiner: dependencies.skillRefiner,
+                slowUpdater: dependencies.slowUpdater,
+                metaUpdater: dependencies.metaUpdater,
             }
         );
     }

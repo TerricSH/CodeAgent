@@ -1,7 +1,7 @@
 const path = require('node:path');
 const { runSkillRollout } = require('./rollout-runner');
 const { copySnapshot, diffTrees, protectedViolations } = require('./workspace');
-const { refinementScore } = require('./ranking');
+const { refinementOutcome } = require('./ranking');
 
 const INFRASTRUCTURE_FAILURES = new Set(['oom', 'timeout', 'infrastructure']);
 
@@ -56,11 +56,10 @@ function normalizedEvaluation(result = {}) {
 }
 
 function attemptWorkspace(artifactRoot, batchId, rolloutId, attempt) {
-    const batch = batchId || 'baseline';
     return path.join(
         artifactRoot,
         'batches',
-        batch,
+        batchId,
         'rollouts',
         rolloutId,
         'attempts',
@@ -90,6 +89,12 @@ class RolloutCoordinator {
     }
 
     async run(options) {
+        if (typeof options.batchId !== 'string' || !options.batchId) {
+            throw new Error('Skill Refinement rollout requires batchId');
+        }
+        if (typeof options.phase !== 'string' || !options.phase) {
+            throw new Error('Skill Refinement rollout requires phase');
+        }
         const id = localRolloutId(options.rolloutIndex);
         const attempts = [];
         let last = null;
@@ -111,7 +116,7 @@ class RolloutCoordinator {
             if (!last.infrastructureFailure) break;
             options.trajectoryJournal?.excludeAttempt(last.attemptKey, {
                 runId: options.runId,
-                batchId: options.batchId || null,
+                batchId: options.batchId,
                 rolloutId: id,
                 attempt,
                 error: last.evaluation?.error || null,
@@ -123,20 +128,22 @@ class RolloutCoordinator {
             options.artifactRoot,
             id,
             last,
-            options.batchId || null
+            options.batchId
         );
         return last;
     }
 
     _attemptContext(options, id, attempt) {
-        const batchId = options.batchId || 'baseline';
+        const batchId = options.batchId;
         return {
             runId: options.runId,
             suiteId: options.suite.id,
             batchId,
-            phase: options.phase || 'baseline',
+            phase: options.phase,
             epoch: options.epoch ?? null,
             step: options.step ?? null,
+            split: options.suite.taskItem?.split || null,
+            taskId: options.suite.taskItem?.id || null,
             rolloutId: id,
             rolloutAttempt: attempt,
             attemptKey: `${options.runId}:${batchId}:${id}:${attempt}`,
@@ -155,10 +162,12 @@ class RolloutCoordinator {
         return {
             id: options.id,
             runId: options.runId,
-            batchId: options.batchId || 'baseline',
-            phase: options.phase || 'baseline',
+            batchId: options.batchId,
+            phase: options.phase,
             epoch: options.epoch ?? null,
             step: options.step ?? null,
+            split: context.split,
+            taskId: context.taskId,
             attempt: options.attempt,
             attemptKey: context.attemptKey,
             startedAt: new Date().toISOString(),
@@ -172,6 +181,7 @@ class RolloutCoordinator {
             diff: { files: [], fileCount: 0, changedBytes: 0 },
             infrastructureFailure: true,
             score: null,
+            success: null,
         };
     }
 
@@ -252,6 +262,21 @@ class RolloutCoordinator {
                 }
             }
             const infrastructureFailure = infrastructureFailures.length > 0;
+            let outcome = null;
+            if (!infrastructureFailure) {
+                try {
+                    outcome = refinementOutcome(
+                        evaluation,
+                        violations,
+                        suite.evaluation.reward
+                    );
+                } catch (error) {
+                    evaluation = {
+                        ...evaluation,
+                        rewardError: error instanceof Error ? error.message : String(error),
+                    };
+                }
+            }
             const diff = diffTrees(baseline, workspace);
             return {
                 id,
@@ -260,6 +285,8 @@ class RolloutCoordinator {
                 phase: context.phase,
                 epoch: context.epoch,
                 step: context.step,
+                split: context.split,
+                taskId: context.taskId,
                 attempt,
                 attemptKey: context.attemptKey,
                 startedAt,
@@ -272,7 +299,8 @@ class RolloutCoordinator {
                 protectedPathViolations: violations,
                 diff,
                 infrastructureFailure,
-                score: infrastructureFailure ? null : refinementScore(evaluation, violations),
+                score: outcome?.reward ?? null,
+                success: outcome?.success ?? null,
             };
         } finally {
             await lease.dispose();
@@ -351,6 +379,21 @@ class RolloutCoordinator {
             }
         }
         const infrastructureFailure = infrastructureFailures.length > 0;
+        let outcome = null;
+        if (!infrastructureFailure) {
+            try {
+                outcome = refinementOutcome(
+                    evaluation,
+                    violations,
+                    suite.evaluation.reward
+                );
+            } catch (error) {
+                evaluation = {
+                    ...evaluation,
+                    rewardError: error instanceof Error ? error.message : String(error),
+                };
+            }
+        }
         const diff = diffTrees(baseline, workspace);
         return {
             id,
@@ -359,6 +402,8 @@ class RolloutCoordinator {
             phase: context.phase,
             epoch: context.epoch,
             step: context.step,
+            split: context.split,
+            taskId: context.taskId,
             attempt,
             attemptKey: context.attemptKey,
             startedAt,
@@ -371,7 +416,8 @@ class RolloutCoordinator {
             protectedPathViolations: violations,
             diff,
             infrastructureFailure,
-            score: infrastructureFailure ? null : refinementScore(evaluation, violations),
+            score: outcome?.reward ?? null,
+            success: outcome?.success ?? null,
         };
     }
 
@@ -396,8 +442,4 @@ class RolloutCoordinator {
 
 module.exports = {
     RolloutCoordinator,
-    infrastructureEvaluation,
-    isInfrastructureResult,
-    normalizedEvaluation,
-    isInfrastructureError,
 };

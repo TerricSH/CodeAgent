@@ -9,19 +9,31 @@ const SNAPSHOT_SECRET_PATHS = new Set([
     'model-providers/config.json',
     'search-providers/config.json',
 ]);
+const SNAPSHOT_PRIVATE_PATHS = Object.freeze(['skill-refinement/suites']);
 const MAX_SNAPSHOT_FILES = 10000;
 const MAX_SNAPSHOT_BYTES = 100 * 1024 * 1024;
 
-function copySnapshot(source, destination) {
+function copySnapshot(source, destination, options = {}) {
     const sourceRoot = fs.realpathSync(path.resolve(source));
     fs.mkdirSync(destination, { recursive: true });
     let files = 0;
     let bytes = 0;
+    const privatePaths = new Set(SNAPSHOT_PRIVATE_PATHS);
+    for (const candidate of options.excludePaths || []) {
+        if (!candidate || !fs.existsSync(candidate)) continue;
+        const realCandidate = fs.realpathSync(path.resolve(candidate));
+        if (!pathIsInside(sourceRoot, realCandidate)) continue;
+        const relative = path.relative(sourceRoot, realCandidate).split(path.sep).join('/');
+        if (relative) privatePaths.add(relative);
+    }
 
     function ignored(relative, depth, name) {
         const portable = relative.split(path.sep).join('/');
         if (depth === 0 && SNAPSHOT_IGNORES.has(name)) return true;
         if ((name === '.env' || name.startsWith('.env.')) && name !== '.env.example') return true;
+        if ([...privatePaths].some(privatePath => (
+            portable === privatePath || portable.startsWith(`${privatePath}/`)
+        ))) return true;
         return SNAPSHOT_SECRET_PATHS.has(portable);
     }
 
@@ -151,4 +163,5 @@ module.exports = {
     scanTree,
     diffTrees,
     protectedViolations,
+    SNAPSHOT_PRIVATE_PATHS,
 };
