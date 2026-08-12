@@ -197,7 +197,7 @@ UI_LABELS={"prompt.user":"User","prompt.ai":"Bot"}
 | `prompt-master` | 提示词大师 - 为任何AI工具编写精准的提示词 | 提示词优化、AI工具使用 |
 | `grill-me` | 代码质询 - 对代码进行深度质询和挑战性审查 | 代码挑战、架构讨论 |
 | `git-commit` | Git提交 - 生成规范的Git提交信息 | Git工作流、提交规范 |
-| `skill-creator` | Skill creation - bootstrap an unknown Skill through verified recurrent refinement | 未知 Skill 的初始生成与验证迭代 |
+| `skill-creator` | Create or update a project Skill; audit Skill-R1 claims and optionally run verified SkillOpt refinement | Skill 创建、更新与算法边界核验 |
 
 ### 技能使用方式
 
