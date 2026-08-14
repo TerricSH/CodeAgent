@@ -11,3 +11,11 @@ model/models/DeepSeek-R1-Distill-Qwen-7B/
 model/models/Qwen3-8B-GGUF/
 model/models/DeepSeek-R1-Distill-Qwen-7B-GGUF/
 skill-refinement/suites/*/
+
+# 本地游戏 Skill、模型权重与测试产物
+.agents/skills/pywright-headless-player/
+model/models/
+artifacts/
+model/workers/qwen-generation-worker.py
+model-providers/index.js
+model-providers/vendors/local-qwen.js
